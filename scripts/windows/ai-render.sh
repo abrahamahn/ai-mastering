@@ -19,7 +19,7 @@ jobs="$(trim_path_arg "${MASTERING_JOBS:-2}")"
 if [ "$#" -ge 5 ]; then
   style="${*:5}"
 else
-  style="bright open pop EDM mastering in the style of Chainsmokers"
+  style="tame Suno AI high-end distortion, wider stereo image, analog low-mid warmth, dynamic punch"
 fi
 
 mkdir -p "$out_dir"
@@ -36,25 +36,6 @@ case "${MASTERING_LOCAL_MODELS:-}" in
     ;;
 esac
 
-apollo_args=()
-case "${MASTERING_APOLLO:-}" in
-  1|true|TRUE|yes|YES|on|ON)
-    apollo_args=(--apollo)
-    ;;
-esac
-case "${MASTERING_APOLLO_ONLY:-}" in
-  1|true|TRUE|yes|YES|on|ON)
-    apollo_args=(--apollo --apollo-only)
-    ;;
-esac
-
-openai_args=()
-case "${MASTERING_OPENAI_JUDGE:-}" in
-  1|true|TRUE|yes|YES|on|ON)
-    openai_args=(--ai)
-    ;;
-esac
-
 run_master_with_env_prefix "$env_prefix" ai-render \
   --input "$(win_path "$input_path")" \
   --out-dir "$(win_path "$out_dir")" \
@@ -62,7 +43,5 @@ run_master_with_env_prefix "$env_prefix" ai-render \
   "--target-lufs=$target_lufs" \
   "--jobs=$jobs" \
   --style "$style" \
-  "${openai_args[@]}" \
   "${local_models_args[@]}" \
-  "${apollo_args[@]}" \
   --json-out "$(win_path "$out_dir/ai-mastering-report.json")"

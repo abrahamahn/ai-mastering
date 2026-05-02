@@ -195,21 +195,17 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "ozone_imager_band_3_width_percent": 8.0,
             "ozone_imager_band_4_width_percent": 11.0,
         })
-        candidate_set("bright_open_edm", {
+        candidate_set("bright_open", {
+            "proq_presence_db": 0.55,
+            "proq_air_db": 0.3,
             "gullfoss_recover": 7.0,
             "gullfoss_tame": 8.0,
             "gullfoss_brighten": 1.0,
             "bax_high_shelf_db": 0.2,
         })
-        bias("streaming_loud_open", 3.0)
-        bias("streaming_polish_plus", 4.0)
-        bias("bright_open_edm", 5.0)
-        bias("musical_restore", 4.0)
-        bias("dynamic_punch_image", 3.0)
-        bias("preserve_open", 2.0)
-        bias("wide_open_color", 8.0)
-        bias("dynamic_open", 5.0)
-        notes.append("bright/open comment: favor open EDM candidate and wider high bands")
+        bias("bright_open", 6.0)
+        bias("balanced_pillars", 3.0)
+        notes.append("bright/open comment: favor the open candidate and wider high bands")
 
     if "streaming" in tags:
         global_set({
@@ -225,13 +221,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "hf_guard_air_to_presence_db": 0.3,
             "hf_guard_max_reduction_db": 1.4,
         })
-        bias("streaming_loud_open", 6.0)
-        bias("streaming_polish_plus", 8.0)
-        bias("punch_warm_dynamic", 3.0)
-        bias("inflator_weiss_density", -2.0)
-        bias("transparent_repair", 3.0)
-        bias("dynamic_open", 4.0)
-        bias("punch_density", -3.0)
+        bias("balanced_pillars", 6.0)
+        bias("punch_forward", 3.0)
+        bias("bright_open", 2.0)
         notes.append("streaming comment: optimize normalized playback loudness, headroom, and chorus crest")
 
     if "dark_muffled" in tags:
@@ -245,17 +237,15 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "gullfoss_brighten": 2.0,
             "source_match_presence_max_db": 2.0,
         })
-        candidate_set("bright_open_edm", {
+        candidate_set("bright_open", {
+            "proq_presence_db": 0.7,
+            "proq_air_db": 0.4,
             "gullfoss_recover": 8.0,
             "gullfoss_brighten": 3.0,
             "bax_high_shelf_db": 0.45,
         })
-        bias("bright_open_edm", 7.0)
-        bias("deharsh_gullfoss", -5.0)
-        bias("controlled_shimmer", -3.0)
-        bias("wide_open_color", 9.0)
-        bias("dynamic_open", 5.0)
-        bias("ai_deglaze", -4.0)
+        bias("bright_open", 7.0)
+        bias("deharsh_repair", -3.0)
         notes.append("muffled/dark comment: reduce de-harshing pressure and restore presence")
 
     if "deharsh" in tags:
@@ -268,42 +258,29 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "hf_guard_enabled": True,
             "hf_guard_max_reduction_db": 1.8,
         })
-        candidate_set("controlled_shimmer", {
-            "gullfoss_recover": 5.0,
-            "gullfoss_tame": 17.0,
-            "gullfoss_brighten": -1.5,
-            "multipass_macro_cap": 18.0,
-        })
-        candidate_set("deharsh_gullfoss", {
+        candidate_set("deharsh_repair", {
+            "proq_presence_db": -0.25,
+            "proq_air_db": -0.85,
             "gullfoss_recover": 3.0,
             "gullfoss_tame": 22.0,
             "gullfoss_brighten": -2.5,
             "multipass_macro_cap": 20.0,
         })
-        candidate_set("analog_warm_punch", {
+        candidate_set("warm_analog", {
+            "proq_warmth_db": 0.65,
+            "proq_air_db": -0.35,
             "gullfoss_tame": 11.0,
             "multipass_macro_cap": 16.0,
             "hf_guard_max_reduction_db": 1.0,
         })
-        candidate_set("ai_artifact_repair", {
-            "gullfoss_tame": 24.0,
-            "multipass_macro_cap": 23.0,
-            "hf_guard_max_reduction_db": 2.3,
-        })
-        candidate_set("bright_open_edm", {
+        candidate_set("bright_open", {
+            "proq_air_db": 0.05,
             "gullfoss_tame": 11.0,
             "gullfoss_brighten": 0.2,
         })
-        bias("streaming_loud_open", 4.0)
-        bias("streaming_polish_plus", 3.0)
-        bias("analog_warm_punch", 6.0)
-        bias("musical_restore", 6.0)
-        bias("ai_artifact_repair", 8.0)
-        bias("deharsh_gullfoss", 7.0)
-        bias("controlled_shimmer", 5.0)
-        bias("ai_deglaze", 10.0)
-        bias("transparent_repair", 6.0)
-        bias("creative_analog", 4.0)
+        bias("deharsh_repair", 8.0)
+        bias("warm_analog", 5.0)
+        bias("balanced_pillars", 3.0)
         notes.append("harsh high-end comment: bias tape-led analog warmth alongside Gullfoss/Multipass de-harshing")
 
     if "wide_stereo" in tags:
@@ -315,12 +292,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "ozone_imager_band_4_width_percent": 14.0,
             "source_match_side_max_db": 2.5,
         })
-        bias("bright_open_edm", 4.0)
-        bias("dynamic_punch_image", 5.0)
-        bias("musical_restore", 4.0)
-        bias("preserve_open", 3.0)
-        bias("wide_open_color", 9.0)
-        bias("dynamic_open", 5.0)
+        bias("bright_open", 4.0)
+        bias("balanced_pillars", 3.0)
         notes.append("wide/stereo comment: enable width-preserving stages and bias open candidates")
 
     if "punch_warm" in tags:
@@ -333,41 +306,32 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "tape_color_scale": 1.1,
             "source_match_sub_trim_max_db": 1.4,
         })
-        candidate_set("punch_warm", {
+        candidate_set("punch_forward", {
+            "proq_punch_db": 0.65,
+            "proq_warmth_db": 0.45,
             "bax_low_shelf_db": 0.55,
             "low_end_focus_contrast": 12.0,
             "low_end_focus_gain_db": 0.25,
             "tape_color_scale": 1.2,
         })
-        candidate_set("punch_warm_dynamic", {
+        candidate_set("balanced_pillars", {
+            "proq_punch_db": 0.3,
+            "proq_warmth_db": 0.35,
             "bax_low_shelf_db": 0.45,
             "low_end_focus_contrast": 8.0,
             "low_end_focus_gain_db": 0.1,
         })
-        candidate_set("analog_warm_punch", {
+        candidate_set("warm_analog", {
+            "proq_warmth_db": 0.75,
+            "proq_punch_db": 0.3,
             "tape_color_scale": 1.4,
             "tape_color_offset": 0.5,
             "gullfoss_recover": 8.0,
             "bax_high_shelf_db": 0.15,
         })
-        candidate_set("musical_restore", {
-            "tape_color_scale": 1.4,
-            "tape_color_offset": 0.6,
-            "low_end_focus_contrast": 14.0,
-            "bax_low_shelf_db": 0.45,
-        })
-        candidate_set("dynamic_punch_image", {
-            "low_end_focus_contrast": 20.0,
-            "low_end_focus_gain_db": 0.3,
-            "loud_section_min_crest_db": 7.3,
-        })
-        bias("musical_restore", 9.0)
-        bias("dynamic_punch_image", 7.0)
-        bias("analog_warm_punch", 8.0)
-        bias("punch_warm", 6.0)
-        bias("punch_warm_dynamic", 5.0)
-        bias("creative_analog", 11.0)
-        bias("punch_density", 8.0)
+        bias("warm_analog", 8.0)
+        bias("punch_forward", 7.0)
+        bias("balanced_pillars", 3.0)
         notes.append("analog/warm comment: favor tape-led harmonic saturation candidate and low-mid warmth")
 
     if "dynamic_guard" in tags:
@@ -379,30 +343,20 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "alpha_ratio": 1.1,
             "ozone_threshold": -0.8,
         })
-        candidate_set("bright_open_edm", {
+        candidate_set("bright_open", {
             "inflator_effect": 5.0,
             "inflator_curve": 1.0,
             "inflator_output_gain": -0.6,
         })
-        candidate_set("punch_warm", {
+        candidate_set("punch_forward", {
             "inflator_effect": 4.0,
             "inflator_curve": 0.0,
             "inflator_output_gain": -0.6,
         })
-        candidate_set("inflator_weiss_density", {
-            "inflator_effect": 7.0,
-            "weiss_amount": 18.0,
-            "weiss_style": "Transparent",
-        })
-        bias("punch_warm_dynamic", 9.0)
-        bias("dynamic_punch_image", 9.0)
-        bias("ai_artifact_repair", 4.0)
-        bias("preserve_open", 4.0)
+        bias("balanced_pillars", 6.0)
+        bias("warm_analog", 4.0)
         bias("original", 2.0)
-        bias("inflator_weiss_density", -6.0)
-        bias("dynamic_open", 10.0)
-        bias("transparent_repair", 4.0)
-        bias("punch_density", -5.0)
+        bias("punch_forward", -3.0)
         notes.append("less-squashed comment: stricter loud-section crest guard and lower density bias")
 
     if "clean_preserve" in tags:
@@ -419,11 +373,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "source_match_side_max_db": 2.5,
         })
         bias("original", 5.0)
-        bias("preserve_open", 7.0)
-        bias("inflator_weiss_density", -5.0)
-        bias("transparent_repair", 8.0)
-        bias("dynamic_open", 4.0)
-        bias("punch_density", -6.0)
+        bias("balanced_pillars", 5.0)
+        bias("deharsh_repair", 2.0)
+        bias("punch_forward", -4.0)
         notes.append("clean/preserve comment: lower processing depth and favor original/preserve")
 
     if "loud_dense" in tags and "dynamic_guard" not in tags:
@@ -436,13 +388,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "loud_section_min_crest_db": 6.3,
             "loud_section_max_crest_loss_db": 0.7,
         })
-        bias("streaming_loud_open", 4.0)
-        bias("streaming_polish_plus", 9.0)
-        bias("musical_restore", 5.0)
-        bias("inflator_weiss_density", 3.0)
-        bias("bright_open_edm", 3.0)
-        bias("punch_density", 10.0)
-        bias("creative_analog", 6.0)
+        bias("punch_forward", 7.0)
+        bias("balanced_pillars", 4.0)
+        bias("bright_open", 2.0)
         notes.append("loud/dense comment: favor perceived density without pushing raw LUFS")
 
     if "vocal_forward" in tags:
@@ -453,15 +401,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "gullfoss_brighten": 0.4,
             "bax_high_shelf_db": 0.15,
         })
-        bias("streaming_loud_open", 2.0)
-        bias("streaming_polish_plus", 3.0)
-        bias("bright_open_edm", 4.0)
-        bias("musical_restore", 4.0)
-        bias("dynamic_punch_image", 2.0)
-        bias("preserve_open", 3.0)
-        bias("wide_open_color", 6.0)
-        bias("dynamic_open", 5.0)
-        bias("creative_analog", 3.0)
+        bias("bright_open", 4.0)
+        bias("balanced_pillars", 3.0)
         notes.append("vocal-forward comment: preserve/restore presence and air")
 
     if not tags:

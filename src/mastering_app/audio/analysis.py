@@ -8,6 +8,45 @@ def _mono(audio: np.ndarray) -> np.ndarray:
     return audio.mean(axis=0) if audio.ndim > 1 else audio
 
 
+def _welch_params(length: int) -> tuple[int, int]:
+    nperseg = min(length, 16384)
+    if nperseg < 1024:
+        nperseg = min(length, 1024)
+    return max(1, nperseg), min(max(0, nperseg // 2), max(0, nperseg - 1))
+
+
+def _welch_band_power(samples: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
+    nperseg, noverlap = _welch_params(len(samples))
+    freqs, power = scipy_signal.welch(
+        np.asarray(samples, dtype=np.float32),
+        fs=sr,
+        nperseg=nperseg,
+        noverlap=noverlap,
+    )
+    mask = (freqs >= low_hz) & (freqs < high_hz)
+    if not np.any(mask):
+        return 1e-18
+    return float(np.mean(np.maximum(power[mask], 1e-18)))
+
+
+def _stereo_band_spectra(
+    audio: np.ndarray,
+    sr: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return compact L/R/CSD spectra for band stereo metrics.
+
+    This avoids filtering the entire song into another full-size float64 array
+    for every metric, which is expensive when candidates render in parallel.
+    """
+    l = np.asarray(audio[0], dtype=np.float32)
+    r = np.asarray(audio[1], dtype=np.float32)
+    nperseg, noverlap = _welch_params(len(l))
+    freqs, left_power = scipy_signal.welch(l, fs=sr, nperseg=nperseg, noverlap=noverlap)
+    _, right_power = scipy_signal.welch(r, fs=sr, nperseg=nperseg, noverlap=noverlap)
+    _, cross_power = scipy_signal.csd(l, r, fs=sr, nperseg=nperseg, noverlap=noverlap)
+    return freqs, left_power, right_power, cross_power
+
+
 def measure_integrated_lufs(audio: np.ndarray, sr: int) -> float:
     meter = pyln.Meter(sr)
     # pyloudnorm expects (samples, channels)
@@ -22,10 +61,15 @@ def measure_hf_ratio(audio: np.ndarray, sr: int, threshold_hz: float = 8000.0) -
     Normal mastered music sits around 0.15–0.25.
     """
     mono = _mono(audio)
-    freqs = np.fft.rfftfreq(len(mono), d=1.0 / sr)
-    magnitude = np.abs(np.fft.rfft(mono))
-    hf_energy = float(np.sum(magnitude[freqs >= threshold_hz] ** 2))
-    total_energy = float(np.sum(magnitude ** 2))
+    nperseg, noverlap = _welch_params(len(mono))
+    freqs, power = scipy_signal.welch(
+        np.asarray(mono, dtype=np.float32),
+        fs=sr,
+        nperseg=nperseg,
+        noverlap=noverlap,
+    )
+    hf_energy = float(np.sum(power[freqs >= threshold_hz]))
+    total_energy = float(np.sum(power))
     return hf_energy / total_energy if total_energy > 0 else 0.0
 
 
@@ -36,14 +80,8 @@ def measure_band_db(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -
     than absolute calibrated SPL.
     """
     mono = _mono(audio)
-    nperseg = min(len(mono), 16384)
-    if nperseg < 1024:
-        nperseg = min(len(mono), 1024)
-    freqs, power = scipy_signal.welch(mono, fs=sr, nperseg=nperseg)
-    mask = (freqs >= low_hz) & (freqs < high_hz)
-    if not np.any(mask):
-        return -120.0
-    return float(10.0 * np.log10(np.mean(np.maximum(power[mask], 1e-18))))
+    power = _welch_band_power(mono, sr, low_hz, high_hz)
+    return float(10.0 * np.log10(power))
 
 
 def _band_limited(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> np.ndarray:
@@ -56,8 +94,9 @@ def _band_limited(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> 
         [low_hz / (sr * 0.5), high_hz / (sr * 0.5)],
         btype="bandpass",
         output="sos",
-    )
-    return scipy_signal.sosfilt(sos, audio.astype(np.float64), axis=-1).astype(np.float32)
+    ).astype(np.float32)
+    data = np.asarray(audio, dtype=np.float32)
+    return scipy_signal.sosfilt(sos, data, axis=-1).astype(np.float32, copy=False)
 
 
 def measure_band_side_to_mid_db(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
@@ -67,33 +106,45 @@ def measure_band_side_to_mid_db(audio: np.ndarray, sr: int, low_hz: float, high_
     """
     if audio.ndim < 2 or audio.shape[0] < 2:
         return -120.0
-    band = _band_limited(audio, sr, low_hz, high_hz)
-    l, r = band[0], band[1]
-    mid = 0.5 * (l + r)
-    side = 0.5 * (l - r)
-    mid_rms = float(np.sqrt(np.mean(mid ** 2)))
-    side_rms = float(np.sqrt(np.mean(side ** 2)))
-    if mid_rms < 1e-10 or side_rms < 1e-10:
+    freqs, left_power, right_power, cross_power = _stereo_band_spectra(audio, sr)
+    high_hz = min(high_hz, sr * 0.45)
+    mask = (freqs >= low_hz) & (freqs < high_hz)
+    if not np.any(mask):
         return -120.0
-    return float(20.0 * np.log10(side_rms / mid_rms))
+    real_cross = np.real(cross_power[mask])
+    mid_power = float(np.mean(np.maximum(0.25 * (left_power[mask] + right_power[mask] + 2.0 * real_cross), 1e-18)))
+    side_power = float(np.mean(np.maximum(0.25 * (left_power[mask] + right_power[mask] - 2.0 * real_cross), 1e-18)))
+    if mid_power < 1e-18 or side_power < 1e-18:
+        return -120.0
+    return float(10.0 * np.log10(side_power / mid_power))
 
 
 def measure_band_correlation(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
     """L/R correlation in a band, useful for high-frequency phase-smear detection."""
     if audio.ndim < 2 or audio.shape[0] < 2:
         return 1.0
-    band = _band_limited(audio, sr, low_hz, high_hz)
-    l, r = band[0], band[1]
-    if float(np.std(l)) < 1e-10 or float(np.std(r)) < 1e-10:
+    freqs, left_power, right_power, cross_power = _stereo_band_spectra(audio, sr)
+    high_hz = min(high_hz, sr * 0.45)
+    mask = (freqs >= low_hz) & (freqs < high_hz)
+    if not np.any(mask):
         return 1.0
-    corr = float(np.corrcoef(l, r)[0, 1])
+    left = float(np.sum(left_power[mask]))
+    right = float(np.sum(right_power[mask]))
+    if left < 1e-18 or right < 1e-18:
+        return 1.0
+    corr = float(np.real(np.sum(cross_power[mask])) / np.sqrt(left * right))
     if not np.isfinite(corr):
         return 1.0
-    return corr
+    return float(np.clip(corr, -1.0, 1.0))
 
 
 def measure_band_crest_factor(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
     """Peak/RMS crest in a band; high HF crest can indicate brittle spikes/fizz."""
+    max_len = int(sr * 45.0)
+    if audio.shape[-1] > max_len:
+        loud = measure_loudest_window(audio, sr, seconds=45.0)
+        start = int(loud["start_seconds"] * sr)
+        audio = audio[..., start:start + max_len]
     band = _band_limited(audio, sr, low_hz, high_hz)
     return measure_crest_factor(band)
 
@@ -104,8 +155,14 @@ def measure_spectral_flatness(audio: np.ndarray, sr: int) -> float:
     Low values (<0.1) mean resonant peaks dominate — soothe2 needs to work harder.
     """
     mono = _mono(audio)
-    magnitude = np.abs(np.fft.rfft(mono))
-    magnitude = np.maximum(magnitude, 1e-10)
+    nperseg, noverlap = _welch_params(len(mono))
+    _, power = scipy_signal.welch(
+        np.asarray(mono, dtype=np.float32),
+        fs=sr,
+        nperseg=nperseg,
+        noverlap=noverlap,
+    )
+    magnitude = np.sqrt(np.maximum(power, 1e-20))
     log_mean = float(np.mean(np.log(magnitude)))
     arith_mean = float(np.mean(magnitude))
     return float(np.exp(log_mean) / arith_mean) if arith_mean > 0 else 0.0
@@ -194,7 +251,7 @@ def measure_sample_peak_dbfs(audio: np.ndarray) -> float:
     return float(20.0 * np.log10(peak))
 
 
-def measure_true_peak_dbfs(audio: np.ndarray, oversample: int = 4) -> float:
+def measure_true_peak_dbfs(audio: np.ndarray, sr: int = 44100, oversample: int = 4) -> float:
     """Approximate true peak by oversampling each channel before peak detection."""
     if oversample <= 1:
         return measure_sample_peak_dbfs(audio)
@@ -202,8 +259,16 @@ def measure_true_peak_dbfs(audio: np.ndarray, oversample: int = 4) -> float:
     channels = audio if audio.ndim > 1 else audio.reshape(1, -1)
     peaks: list[float] = []
     for channel in channels:
-        oversampled = scipy_signal.resample_poly(channel, oversample, 1)
-        peaks.append(float(np.max(np.abs(oversampled))))
+        chunk_len = max(1, int(15.0 * sr))
+        overlap = min(len(channel), 256)
+        channel_peak = 0.0
+        for start in range(0, len(channel), chunk_len):
+            end = min(len(channel), start + chunk_len)
+            read_start = max(0, start - overlap)
+            read_end = min(len(channel), end + overlap)
+            oversampled = scipy_signal.resample_poly(channel[read_start:read_end], oversample, 1)
+            channel_peak = max(channel_peak, float(np.max(np.abs(oversampled))))
+        peaks.append(channel_peak)
 
     peak = max(peaks) if peaks else 0.0
     if peak < 1e-10:
@@ -221,8 +286,19 @@ def measure_stereo_correlation(audio: np.ndarray) -> float:
     if audio.ndim < 2 or audio.shape[0] < 2:
         return 1.0
     l, r = audio[0], audio[1]
-    corr = np.corrcoef(l, r)
-    return float(corr[0, 1])
+    n = max(1, len(l))
+    mean_l = float(np.mean(l))
+    mean_r = float(np.mean(r))
+    mean_lr = float(np.dot(l, r) / n)
+    mean_l2 = float(np.dot(l, l) / n)
+    mean_r2 = float(np.dot(r, r) / n)
+    cov = mean_lr - mean_l * mean_r
+    var_l = max(0.0, mean_l2 - mean_l * mean_l)
+    var_r = max(0.0, mean_r2 - mean_r * mean_r)
+    denom = np.sqrt(var_l * var_r)
+    if denom < 1e-18:
+        return 1.0
+    return float(np.clip(cov / denom, -1.0, 1.0))
 
 
 def measure_side_to_mid_db(audio: np.ndarray) -> float:
@@ -234,10 +310,12 @@ def measure_side_to_mid_db(audio: np.ndarray) -> float:
     if audio.ndim < 2 or audio.shape[0] < 2:
         return -120.0
     l, r = audio[0], audio[1]
-    mid = 0.5 * (l + r)
-    side = 0.5 * (l - r)
-    mid_rms = float(np.sqrt(np.mean(mid ** 2)))
-    side_rms = float(np.sqrt(np.mean(side ** 2)))
+    n = max(1, len(l))
+    mean_l2 = float(np.dot(l, l) / n)
+    mean_r2 = float(np.dot(r, r) / n)
+    mean_lr = float(np.dot(l, r) / n)
+    mid_rms = float(np.sqrt(max(0.0, 0.25 * (mean_l2 + 2.0 * mean_lr + mean_r2))))
+    side_rms = float(np.sqrt(max(0.0, 0.25 * (mean_l2 - 2.0 * mean_lr + mean_r2))))
     if mid_rms < 1e-10 or side_rms < 1e-10:
         return -120.0
     return float(20.0 * np.log10(side_rms / mid_rms))

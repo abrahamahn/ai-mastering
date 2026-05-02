@@ -6,8 +6,6 @@
 #   ./master.sh song.wav
 #   ./master.sh /mnt/c/Production/music/Submission/song.wav
 #   ./master.sh /mnt/c/Production/music/Submission
-#   ./master.sh --apollo /mnt/c/Production/music/Submission/song.wav
-#   ./master.sh --apollo-only /mnt/c/Production/music/Submission/song.wav
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +15,7 @@ SCRIPT_DIR="$ROOT_DIR/scripts/windows"
 
 DEFAULT_DIR="${ABE_PENDING_DIR:-/mnt/c/Production/music/Submission}"
 target_lufs="${MASTERING_PRIMARY_LUFS:--14}"
-style="${MASTERING_QUICKSTART_STYLE:-bright open pop EDM mastering in the style of Chainsmokers}"
+style="${MASTERING_QUICKSTART_STYLE:-tame Suno AI high-end distortion, wider stereo image, analog low-mid warmth, dynamic punch}"
 
 usage() {
   cat <<'EOF'
@@ -26,16 +24,20 @@ Usage:
   ./master.sh <input-wav>
   ./master.sh <folder>
   ./master.sh <input-wav> <out-dir> [basename]
-  ./master.sh --apollo <input-wav>
-  ./master.sh --apollo-only <input-wav>
+  ./master.sh --test <input-wav>
 
 Options:
-  --apollo      enable Apollo restoration candidates for this run
-  --apollo-only run only Apollo restoration; skip VST mastering candidates
-  --no-apollo   disable Apollo even if MASTERING_APOLLO=1 is set
-  --fast        disable OpenAI judging and optional CLAP/MERT local model scoring
+  --fast        disable optional CLAP/MERT local model scoring
   --jobs N      parallel candidate render jobs
   --target N    target LUFS, default from MASTERING_PRIMARY_LUFS or -14
+  --no-test     render the full song even when MASTERING_TEST=1
+  --test [MODE] render a short diagnostic clip instead of the full song.
+                MODE can be loudest (default, 30s) or first (45s)
+  --test-first  shortcut for --test first
+  --test-loudest
+                shortcut for --test loudest
+  --test-seconds N
+                override test clip duration in seconds
   --reuse-output
                 write directly to <input folder>/masters instead of a timestamped run folder
 
@@ -46,16 +48,25 @@ Defaults:
 
 Examples:
   ./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
-  ./master.sh --apollo /mnt/c/Production/music/Submission/abe002_mulholland.wav
-  ./master.sh --apollo-only --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
-  ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
+  ./master.sh --test --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
+  ./master.sh --test first --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
   ./master.sh --jobs 2 /mnt/c/Production/music/Submission/abe002_mulholland.wav
   MASTERING_REFERENCE_DIR=/mnt/c/Production/music/references ./master.sh
 EOF
 }
 
-apollo_flag=""
 reuse_output=0
+test_mode=""
+test_seconds="${MASTERING_TEST_SECONDS:-}"
+case "${MASTERING_TEST:-}" in
+  1|true|TRUE|yes|YES|on|ON)
+    test_mode="${MASTERING_TEST_MODE:-loudest}"
+    ;;
+esac
+case "$test_mode" in
+  first45) test_mode="first" ;;
+  loudest30) test_mode="loudest" ;;
+esac
 positionals=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -63,22 +74,8 @@ while [ "$#" -gt 0 ]; do
       usage
       exit 0
       ;;
-    --apollo)
-      apollo_flag="1"
-      shift
-      ;;
-    --apollo-only)
-      apollo_flag="1"
-      export MASTERING_APOLLO_ONLY=1
-      shift
-      ;;
-    --no-apollo)
-      apollo_flag="0"
-      shift
-      ;;
     --fast)
       export MASTERING_LOCAL_MODELS=0
-      export MASTERING_OPENAI_JUDGE=0
       shift
       ;;
     --jobs)
@@ -95,6 +92,39 @@ while [ "$#" -gt 0 ]; do
         exit 2
       fi
       target_lufs="$2"
+      shift 2
+      ;;
+    --no-test)
+      test_mode=""
+      test_seconds=""
+      shift
+      ;;
+    --test)
+      test_mode="${MASTERING_TEST_MODE:-loudest}"
+      if [ -n "${2:-}" ] && [[ "$2" != -* ]] && [[ "$2" =~ ^(first|first45|loudest|loudest30)$ ]]; then
+        case "$2" in
+          first|first45) test_mode="first" ;;
+          loudest|loudest30) test_mode="loudest" ;;
+        esac
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    --test-first)
+      test_mode="first"
+      shift
+      ;;
+    --test-loudest)
+      test_mode="loudest"
+      shift
+      ;;
+    --test-seconds)
+      if [ -z "${2:-}" ]; then
+        echo "[master] --test-seconds requires a value" >&2
+        exit 2
+      fi
+      test_seconds="$2"
       shift 2
       ;;
     --reuse-output)
@@ -120,11 +150,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 set -- "${positionals[@]}"
-if [ "$apollo_flag" = "1" ]; then
-  export MASTERING_APOLLO=1
-elif [ "$apollo_flag" = "0" ]; then
-  export MASTERING_APOLLO=0
-fi
 
 find_newest_wav() {
   local dir="$1"
@@ -143,6 +168,9 @@ find_newest_wav() {
 
 arg="${1:-$DEFAULT_DIR}"
 arg="$(normalize_path_arg "$arg")"
+if [ ! -e "$arg" ] && [[ "$arg" != */* ]] && [ -f "$DEFAULT_DIR/$arg" ]; then
+  arg="$DEFAULT_DIR/$arg"
+fi
 
 if [ -d "$arg" ]; then
   input_wav="$(find_newest_wav "$arg")"
@@ -166,6 +194,33 @@ elif [ "$reuse_output" = "1" ]; then
 else
   run_stamp="$(date +%Y%m%d-%H%M%S)"
   out_dir="$input_dir/masters/${basename}_${run_stamp}"
+fi
+
+if [ -n "$test_mode" ]; then
+  case "$test_mode" in
+    first)
+      test_seconds="${test_seconds:-45}"
+      ;;
+    loudest)
+      test_seconds="${test_seconds:-30}"
+      ;;
+    *)
+      echo "[master] Invalid --test mode: $test_mode (use first or loudest)" >&2
+      exit 2
+      ;;
+  esac
+
+  mkdir -p "$out_dir"
+  test_basename="${basename}_test_${test_mode}${test_seconds}s"
+  test_input_wav="$out_dir/${test_basename}.wav"
+  echo "[master] Test mode: $test_mode ${test_seconds}s"
+  run_master clip-test \
+    --input "$(win_path "$input_wav")" \
+    --output "$(win_path "$test_input_wav")" \
+    --mode "$test_mode" \
+    --seconds "$test_seconds"
+  input_wav="$test_input_wav"
+  basename="$test_basename"
 fi
 
 echo "[master] Source:  $input_wav"

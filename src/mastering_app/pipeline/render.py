@@ -86,7 +86,7 @@ def _match_lufs_with_peak_guard(
     source_loud_section_crest_db: float | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     lufs = measure_integrated_lufs(audio, sr)
-    true_peak = measure_true_peak_dbfs(audio)
+    true_peak = measure_true_peak_dbfs(audio, sr)
     delta = target_lufs - lufs
     warnings: list[str] = []
     loud_section = measure_loudest_window(audio, sr, LOUD_SECTION_SECONDS)
@@ -122,7 +122,7 @@ def _match_lufs_with_peak_guard(
         audio = _gain(audio, applied)
 
     final_lufs = measure_integrated_lufs(audio, sr)
-    final_true_peak = measure_true_peak_dbfs(audio)
+    final_true_peak = measure_true_peak_dbfs(audio, sr)
     final_sample_peak = measure_sample_peak_dbfs(audio)
 
     if abs(final_lufs - target_lufs) > LUFS_TOLERANCE_DB:
@@ -164,7 +164,7 @@ def render_targets(
     audio, sr = sf.read(str(input_path), dtype='float32', always_2d=True)
     audio = audio.T
     source_lufs = measure_integrated_lufs(audio, sr)
-    source_true_peak = measure_true_peak_dbfs(audio)
+    source_true_peak = measure_true_peak_dbfs(audio, sr)
     source_sample_peak = measure_sample_peak_dbfs(audio)
     source_stereo = _stereo_metrics(audio)
     source_loud_section = measure_loudest_window(audio, sr, LOUD_SECTION_SECONDS)

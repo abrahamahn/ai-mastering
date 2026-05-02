@@ -13,8 +13,10 @@ def finalize_ai_report(report: dict[str, Any], json_out: Path | None) -> dict[st
         from ..history.db import HistoryDB
 
         db = HistoryDB()
-        run_id = db.save_run(report)
-        db.close()
+        try:
+            run_id = db.save_run(report)
+        finally:
+            db.close()
         report["history_run_id"] = run_id
         print(
             f"  [ai-master] Run saved to history DB (id={run_id}). "

@@ -258,45 +258,21 @@ def _apply_hf_guard(audio: np.ndarray, sr: int, settings: MasteringSettings) -> 
     }
 
 
-def _apply_ms_tone(audio: np.ndarray, sr: int, settings: MasteringSettings) -> np.ndarray:
-    if not settings.ms_tone_enabled or audio.shape[0] < 2:
-        return audio
+def _candidate_eq_shape(settings: MasteringSettings) -> list[EqMove]:
+    """Candidate-specific tone moves for the Pro-Q/corrective EQ slot."""
+    if not settings.proq_shape_enabled:
+        return []
 
-    left = audio[0]
-    right = audio[1]
-    mid = ((left + right) * 0.5)[None, :]
-    side = ((left - right) * 0.5)[None, :]
-
-    mid_moves: list[EqMove] = []
-    side_moves: list[EqMove] = []
-    if abs(settings.ms_mid_warmth_db) >= 0.05:
-        mid_moves.append(EqMove("bell", 280.0, settings.ms_mid_warmth_db, 0.8, "creative mid warmth"))
-    if abs(settings.ms_mid_presence_db) >= 0.05:
-        mid_moves.append(EqMove("bell", 2800.0, settings.ms_mid_presence_db, 1.0, "creative vocal presence"))
-    if abs(settings.ms_side_presence_db) >= 0.05:
-        side_moves.append(EqMove("bell", 3500.0, settings.ms_side_presence_db, 0.9, "creative side presence"))
-    if abs(settings.ms_side_hf_shelf_db) >= 0.05:
-        side_moves.append(EqMove("high_shelf", 6800.0, settings.ms_side_hf_shelf_db, None, "creative side-high deglaze"))
-
-    mid = apply_corrective_eq(mid, sr, mid_moves)
-    side = apply_corrective_eq(side, sr, side_moves)
-
-    processed = audio.copy()
-    processed[0] = mid[0] + side[0]
-    processed[1] = mid[0] - side[0]
-    return processed.astype(np.float32, copy=False)
-
-
-def _apply_parallel_soft_clip(audio: np.ndarray, settings: MasteringSettings) -> np.ndarray:
-    if not settings.soft_clip_enabled or settings.soft_clip_mix <= 0.0:
-        return audio
-    drive = 10.0 ** (settings.soft_clip_drive_db / 20.0)
-    driven = np.tanh(audio * drive) / max(np.tanh(drive), 1e-6)
-    mix = settings.soft_clip_mix / 100.0
-    processed = audio * (1.0 - mix) + driven * mix
-    if abs(settings.soft_clip_output_trim_db) > 0.01:
-        processed = _gain(processed, settings.soft_clip_output_trim_db)
-    return processed.astype(np.float32, copy=False)
+    moves: list[EqMove] = []
+    if abs(settings.proq_punch_db) >= 0.05:
+        moves.append(EqMove("bell", 95.0, settings.proq_punch_db, 0.9, "candidate punch shape"))
+    if abs(settings.proq_warmth_db) >= 0.05:
+        moves.append(EqMove("bell", 280.0, settings.proq_warmth_db, 0.85, "candidate low-mid warmth shape"))
+    if abs(settings.proq_presence_db) >= 0.05:
+        moves.append(EqMove("bell", 2800.0, settings.proq_presence_db, 1.0, "candidate presence shape"))
+    if abs(settings.proq_air_db) >= 0.05:
+        moves.append(EqMove("high_shelf", settings.hf_guard_frequency_hz, settings.proq_air_db, None, "candidate air shape"))
+    return moves
 
 
 def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringSettings | None = None) -> np.ndarray:
@@ -336,8 +312,10 @@ def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringS
     # ── Stage 1: Dynamic corrective EQ + Pro-Q 3 ─────────────────────────────
     # FabFilter parameter IDs are not stable enough to automate blindly, so the
     # per-song corrective moves are applied here with channel-linked filters.
-    eq_moves = build_corrective_eq_plan(audio, sr) if settings.corrective_eq_enabled else []
-    stage(f"Dynamic EQ + Pro-Q 3  ({len(eq_moves)} moves)")
+    corrective_moves = build_corrective_eq_plan(audio, sr) if settings.corrective_eq_enabled else []
+    shape_moves = _candidate_eq_shape(settings)
+    eq_moves = [*corrective_moves, *shape_moves]
+    stage(f"Dynamic EQ + candidate shape + Pro-Q 3  ({len(eq_moves)} moves)")
     for move in eq_moves:
         if move.kind == "highpass":
             print(f"        {move.kind:10s} {move.frequency_hz:7.0f} Hz  ({move.reason})")
@@ -408,16 +386,6 @@ def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringS
         _try_set(bx, PARAMS['bx_digital_v3']['mono_maker_active'], settings.bx_mono_maker_enabled)
         _try_set(bx, PARAMS['bx_digital_v3']['mono_maker_frequency_hz'], f"{settings.bx_mono_maker_hz:.0f}")
         audio = _apply(bx, audio, sr)
-
-    if settings.ms_tone_enabled:
-        stage(
-            "Creative M/S tone  "
-            f"(mid warmth={settings.ms_mid_warmth_db:+.1f}, "
-            f"mid presence={settings.ms_mid_presence_db:+.1f}, "
-            f"side presence={settings.ms_side_presence_db:+.1f}, "
-            f"side HF={settings.ms_side_hf_shelf_db:+.1f} dB)"
-        )
-        audio = _apply_ms_tone(audio, sr, settings)
 
     # ── Stage 3: soothe2 pass 1 — resonance suppression ──────────────────────
     # Analyze AFTER EQ+colour: how resonant is the signal now?
@@ -520,14 +488,6 @@ def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringS
         _try_set(inflator, PARAMS['oxford_inflator']['curve'], settings.inflator_curve)
         _try_set(inflator, PARAMS['oxford_inflator']['output_gain'], settings.inflator_output_gain)
         audio = _apply(inflator, audio, sr)
-
-    if settings.soft_clip_enabled:
-        stage(
-            "Parallel soft clip  "
-            f"(drive={settings.soft_clip_drive_db:.1f} dB, "
-            f"mix={settings.soft_clip_mix:.0f}%, trim={settings.soft_clip_output_trim_db:+.1f} dB)"
-        )
-        audio = _apply_parallel_soft_clip(audio, settings)
 
     hf_guarded, hf_guard = _apply_hf_guard(audio, sr, settings)
     if hf_guard["reduction_db"] > 0.0:

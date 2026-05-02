@@ -4,134 +4,16 @@ from typing import Any
 
 import numpy as np
 
-from ..history.ranker import TasteRanker
 from .intent import apply_intent_score_bias
 from .metrics import normalized_band_delta, source_is_harsh
 from .render import STREAMING_REFERENCE_LUFS
 
 
-def commercial_pop_score(source_metrics: dict[str, float], candidate_metrics: dict[str, float]) -> float:
-    """Reward pop/EDM release qualities after streaming-style normalization."""
-    score = 0.0
-
-    turn_down_db = max(0.0, candidate_metrics["lufs"] - STREAMING_REFERENCE_LUFS)
-    if 0.0 <= turn_down_db <= 1.5:
-        score += 1.0
-    elif turn_down_db > 2.5:
-        score -= min(3.5, (turn_down_db - 2.5) * 0.8)
-
-    side_delta = candidate_metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"]
-    if side_delta > -0.35:
-        score += 1.2
-    else:
-        score -= 2.0
-
-    presence_delta = normalized_band_delta(source_metrics, candidate_metrics, "presence_db")
-    if presence_delta > -0.4:
-        score += 1.2
-    else:
-        score -= 2.0
-
-    sub_delta = normalized_band_delta(source_metrics, candidate_metrics, "sub_db")
-    if 0.4 <= sub_delta <= 2.4:
-        score += 1.3
-    elif sub_delta > 3.2:
-        score -= 1.5
-
-    air_delta = normalized_band_delta(source_metrics, candidate_metrics, "air_db")
-    if source_is_harsh(source_metrics):
-        if -5.0 <= air_delta <= -0.7:
-            score += 1.0
-        elif air_delta > -0.2:
-            score -= 1.8
-    else:
-        if -0.5 <= air_delta <= 1.5:
-            score += 0.8
-        elif air_delta > 2.0:
-            score -= 1.5
-
-    crest_reduction = source_metrics["crest_factor_db"] - candidate_metrics["crest_factor_db"]
-    if crest_reduction <= 3.0:
-        score += 0.8
-    else:
-        score -= 1.5
-
-    return float(score)
-
-
-def audible_polish_score(source_metrics: dict[str, float], candidate_metrics: dict[str, float]) -> float:
-    """Reward safe differences that should be obvious after level matching."""
-    score = 0.0
-    normalized_presence_delta = normalized_band_delta(source_metrics, candidate_metrics, "presence_db")
-    normalized_low_mid_delta = normalized_band_delta(source_metrics, candidate_metrics, "low_mid_db")
-    normalized_sub_delta = normalized_band_delta(source_metrics, candidate_metrics, "sub_db")
-    normalized_air_delta = normalized_band_delta(source_metrics, candidate_metrics, "air_db")
-    side_delta = candidate_metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"]
-    crest_reduction = source_metrics["crest_factor_db"] - candidate_metrics["crest_factor_db"]
-
-    if 0.25 <= normalized_low_mid_delta <= 1.8:
-        score += min(2.8, normalized_low_mid_delta * 1.4)
-    if 0.15 <= normalized_presence_delta <= 1.6:
-        score += min(2.2, normalized_presence_delta * 1.1)
-    if 0.2 <= normalized_sub_delta <= 2.0:
-        score += min(1.8, normalized_sub_delta * 0.8)
-    if side_delta >= -0.25:
-        score += min(1.8, max(0.0, side_delta + 0.25) * 1.2)
-    if 0.2 <= crest_reduction <= 1.6:
-        score += min(2.0, crest_reduction * 1.1)
-    if source_is_harsh(source_metrics) and -4.5 <= normalized_air_delta <= -0.4:
-        score += min(2.5, abs(normalized_air_delta) * 0.8)
-
-    if crest_reduction > 2.2:
-        score -= min(4.0, (crest_reduction - 2.2) * 2.0)
-    if normalized_air_delta > 0.3:
-        score -= min(4.0, normalized_air_delta * 2.0)
-
-    return float(np.clip(score, -4.0, 10.0))
-
-
-def harshness_adjustment(source_metrics: dict[str, float], candidate_metrics: dict[str, float]) -> float:
-    """Reward necessary de-harshing and always punish added digital edge."""
-    score = 0.0
-    air_delta = candidate_metrics["air_db"] - source_metrics["air_db"]
-    upper_delta = candidate_metrics["upper_presence_db"] - source_metrics["upper_presence_db"]
-    hf_delta = candidate_metrics["hf_ratio"] - source_metrics["hf_ratio"]
-    presence_delta = candidate_metrics["presence_db"] - source_metrics["presence_db"]
-    source_harsh = source_is_harsh(source_metrics)
-
-    if source_harsh and -5.0 <= air_delta <= -0.7:
-        score += min(7.0, abs(air_delta) * 2.1)
-    elif air_delta > 0.2:
-        score -= min(8.0, air_delta * 2.5)
-    elif air_delta < -6.0:
-        score -= min(6.0, abs(air_delta + 6.0) * 1.5)
-
-    if source_harsh and -4.0 <= upper_delta <= -0.5:
-        score += min(5.0, abs(upper_delta) * 1.6)
-    elif upper_delta < -5.0:
-        score -= min(5.0, abs(upper_delta + 5.0) * 1.2)
-    elif upper_delta > 0.3:
-        score -= min(5.0, upper_delta * 1.5)
-
-    if source_harsh and hf_delta < -0.015:
-        score += min(5.0, abs(hf_delta) * 75.0)
-    elif hf_delta > 0.01:
-        score -= min(6.0, hf_delta * 90.0)
-
-    if presence_delta < -0.9:
-        if not source_harsh:
-            score -= min(8.0, abs(presence_delta) * 4.0)
-        elif presence_delta < -2.5:
-            score -= min(4.0, abs(presence_delta + 2.5) * 2.5)
-
-    return float(np.clip(score, -10.0, 12.0))
-
-
-def musical_restoration_score(
+def pillar_mastering_score(
     source_metrics: dict[str, float],
     candidate_metrics: dict[str, float],
 ) -> tuple[float, list[str]]:
-    """Reward the actual target: musical color, punch, width, and AI-artifact reduction."""
+    """Reward the four mastering pillars: de-harshing, width, warmth, and punch."""
     score = 0.0
     notes: list[str] = []
 
@@ -349,84 +231,34 @@ def score_candidate(
     elif streaming_turn_down_db <= 0.5 and target_lufs <= STREAMING_REFERENCE_LUFS + 0.5:
         score += 3.0
 
-    commercial = commercial_pop_score(source_metrics, candidate_metrics) * 3.0
-    score += commercial
-    if abs(commercial) >= 1.0:
-        notes.append(f"commercial pop score {commercial:+.1f}")
-
-    harshness = harshness_adjustment(source_metrics, candidate_metrics)
-    score += harshness
-    if abs(harshness) >= 1.0:
-        notes.append(f"source harshness adjustment {harshness:+.1f}")
-
-    audible_polish = audible_polish_score(source_metrics, candidate_metrics)
-    score += audible_polish
-    if abs(audible_polish) >= 1.0:
-        notes.append(f"audible polish score {audible_polish:+.1f}")
-
-    musical, musical_notes = musical_restoration_score(source_metrics, candidate_metrics)
-    score += musical
-    if abs(musical) >= 1.0:
-        notes.append(f"musical restoration score {musical:+.1f}")
-    notes.extend(musical_notes)
+    pillar_score, pillar_notes = pillar_mastering_score(source_metrics, candidate_metrics)
+    score += pillar_score
+    if abs(pillar_score) >= 1.0:
+        notes.append(f"pillar mastering score {pillar_score:+.1f}")
+    notes.extend(pillar_notes)
 
     return float(round(score, 3)), notes
-
-
-def creative_audibility_bonus(
-    source_metrics: dict[str, float],
-    candidate_metrics: dict[str, float],
-) -> tuple[float, list[str]]:
-    """Reward creative candidates for making audible, controlled moves."""
-    notes: list[str] = []
-    low_mid = abs(normalized_band_delta(source_metrics, candidate_metrics, "low_mid_db"))
-    vocal = abs(normalized_band_delta(source_metrics, candidate_metrics, "vocal_presence_db"))
-    width = abs(candidate_metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"])
-    artifact_drop = max(0.0, source_metrics.get("artifact_index", 0.0) - candidate_metrics.get("artifact_index", 0.0))
-    punch = max(0.0, candidate_metrics["punch_to_mud_db"] - source_metrics["punch_to_mud_db"])
-    audible_move = low_mid + vocal + width + artifact_drop + punch
-
-    bonus = min(14.0, max(0.0, audible_move - 1.2) * 2.2)
-    penalty = 0.0
-    if candidate_metrics["loud_window_crest_db"] < 4.8:
-        penalty += min(8.0, (4.8 - candidate_metrics["loud_window_crest_db"]) * 4.0)
-    if candidate_metrics["true_peak_dbfs"] > -0.6:
-        penalty += 8.0
-    if bonus >= 1.0:
-        notes.append(f"creative audibility bonus {bonus:+.1f}")
-    if penalty >= 1.0:
-        notes.append(f"creative safety penalty {-penalty:+.1f}")
-    return float(bonus - penalty), notes
 
 
 def candidate_passes_release_guards(source_metrics: dict[str, float], candidate: dict[str, Any]) -> bool:
     if candidate["name"] == "original":
         return True
     metrics = candidate["metrics"]
-    settings = candidate.get("settings") or {}
-    creative = bool(settings.get("creative_mode"))
-    presence_floor = -2.8 if creative else -1.6
-    side_floor = -2.2 if creative else -1.6
-    corr_ceiling = 0.18 if creative else 0.12
-    sub_ceiling = 3.5 if creative else 2.4
-    hf_ceiling = 0.06 if creative else 0.03
-    artifact_ceiling = 2.8 if creative else 1.5
-    high_corr_floor = -0.32 if creative else -0.25
-    if metrics["presence_db"] - source_metrics["presence_db"] < presence_floor:
+    if metrics["presence_db"] - source_metrics["presence_db"] < -1.6:
         return False
-    if metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"] < side_floor:
+    if metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"] < -1.6:
         return False
-    if metrics["stereo_correlation"] - source_metrics["stereo_correlation"] > corr_ceiling:
+    if metrics["stereo_correlation"] - source_metrics["stereo_correlation"] > 0.12:
         return False
-    if metrics["sub_db"] - source_metrics["sub_db"] > sub_ceiling:
+    if metrics["sub_db"] - source_metrics["sub_db"] > 2.4:
         return False
-    if metrics["hf_ratio"] - source_metrics["hf_ratio"] > hf_ceiling:
+    if metrics["hf_ratio"] - source_metrics["hf_ratio"] > 0.03:
         return False
-    if metrics.get("artifact_index", 0.0) - source_metrics.get("artifact_index", 0.0) > artifact_ceiling:
+    if metrics.get("artifact_index", 0.0) - source_metrics.get("artifact_index", 0.0) > 1.5:
         return False
-    if metrics.get("high_band_correlation", 1.0) < high_corr_floor:
+    if metrics.get("high_band_correlation", 1.0) < -0.25:
         return False
-    if not creative and source_is_harsh(source_metrics) and metrics["air_db"] - source_metrics["air_db"] > -0.2:
+    if source_is_harsh(source_metrics) and metrics["air_db"] - source_metrics["air_db"] > -0.2:
         return False
     if (
         source_metrics["loud_window_crest_db"] >= 6.0
@@ -445,16 +277,5 @@ def best_candidate(source_metrics: dict[str, float], candidates: list[dict[str, 
     return max(passing_all or candidates, key=lambda c: c["score"])
 
 
-def apply_taste_and_intent(
-    candidates: list[dict[str, Any]],
-    ranker: TasteRanker,
-    intent: Any,
-) -> None:
-    if ranker.available:
-        for candidate in candidates:
-            taste = ranker.score(candidate) * 3.0
-            candidate["score"] = float(round(candidate["score"] + taste, 3))
-            candidate["taste_score"] = float(round(taste, 3))
-            if abs(taste) >= 0.5:
-                candidate["score_notes"].append(f"taste ranker {taste:+.2f}")
+def apply_intent_bias(candidates: list[dict[str, Any]], intent: Any) -> None:
     apply_intent_score_bias(candidates, intent)

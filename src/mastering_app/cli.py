@@ -49,7 +49,7 @@ def cmd_check() -> bool:
         if p.suffix == '.vstpreset':
             print(f"  [OK] {p.name}")
 
-    print("\nChecking AI candidate settings:")
+    print("\nChecking mastering candidate settings:")
     try:
         for settings in candidate_settings("bright open pop EDM"):
             print(f"  [OK] {settings.name}")
@@ -106,14 +106,9 @@ def cmd_ai_render(
     basename: str,
     target_lufs: float,
     style: str,
-    rounds: int,
-    use_ai: bool,
-    model: str,
     local_models: bool | None,
     json_out: str | None,
     jobs: int,
-    apollo: bool | None,
-    apollo_only: bool,
 ) -> None:
     from .pipeline.ai_master import render_ai_master
 
@@ -123,14 +118,52 @@ def cmd_ai_render(
         basename,
         target_lufs,
         style,
-        rounds,
-        use_ai,
-        model,
         local_models,
         _cli_path(json_out) if json_out else None,
         jobs,
-        apollo,
-        apollo_only,
+    )
+
+
+def cmd_clip_test(input_path: str, output_path: str, mode: str, seconds: float) -> None:
+    import numpy as np
+    import soundfile as sf
+
+    in_path = _cli_path(input_path)
+    out_path = _cli_path(output_path)
+    if not in_path.exists():
+        print(f"[clip-test] ERROR: input not found: {in_path}", file=sys.stderr)
+        sys.exit(1)
+
+    audio, sr = sf.read(str(in_path), dtype="float32", always_2d=True)
+    total = audio.shape[0]
+    length = max(1, min(total, int(seconds * sr)))
+    selected_mode = mode.strip().lower()
+
+    if selected_mode == "first":
+        start = 0
+    elif selected_mode == "loudest":
+        mono = audio.mean(axis=1)
+        hop = max(1, min(sr, length // 4))
+        best_start = 0
+        best_rms = -1.0
+        last_start = max(0, total - length)
+        for start_candidate in range(0, last_start + 1, hop):
+            segment = mono[start_candidate:start_candidate + length]
+            rms = float(np.sqrt(np.mean(segment ** 2))) if len(segment) else 0.0
+            if rms > best_rms:
+                best_rms = rms
+                best_start = start_candidate
+        start = best_start
+    else:
+        print(f"[clip-test] ERROR: invalid mode '{mode}'. Use 'first' or 'loudest'.", file=sys.stderr)
+        sys.exit(2)
+
+    end = min(total, start + length)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(out_path), audio[start:end], sr, subtype="PCM_24")
+    print(
+        f"[clip-test] Wrote {selected_mode} test clip: "
+        f"{start / sr:.1f}-{end / sr:.1f}s -> {out_path}"
     )
 
 
@@ -263,12 +296,6 @@ def cmd_history(limit: int) -> None:
         )
 
 
-def cmd_train_ranker() -> None:
-    from .history.ranker import train
-    result = train()
-    print(json.dumps(result, indent=2))
-
-
 def cmd_html_report(json_path: str, output_path: str | None) -> None:
     from .pipeline.report_html import write_ai_html_report
 
@@ -305,12 +332,12 @@ def main() -> None:
         'ai-render',
         'single',
         'check',
+        'clip-test',
         'discover',
         'models-check',
         'pick',
         'prefer',
         'history',
-        'train-ranker',
         'html-report',
     }:
         legacy = argparse.ArgumentParser(description='Legacy single-file mastering command')
@@ -331,37 +358,21 @@ def main() -> None:
     render_parser.add_argument('--targets', default='-14,-12', help='Comma-separated LUFS targets, first is primary')
     render_parser.add_argument('--json-out', help='Optional path for machine-readable render report')
 
-    ai_parser = subcommands.add_parser('ai-render', help='Render bounded candidates with metric/local-model scoring')
+    ai_parser = subcommands.add_parser('ai-render', help='Render five mastering candidates with metric/local-model scoring')
     ai_parser.add_argument('--input', required=True, help='Input WAV path')
     ai_parser.add_argument('--out-dir', required=True, help='Output directory')
     ai_parser.add_argument('--basename', required=True, help='Release basename for output files')
     ai_parser.add_argument('--target-lufs', type=float, default=-14.0, help='Candidate loudness target')
     ai_parser.add_argument(
         '--style',
-        default='bright open pop EDM mastering in the style of Chainsmokers',
+        default='tame Suno AI high-end distortion, wider stereo image, analog low-mid warmth, dynamic punch',
         help='Mastering intent/comment used by scoring and preset selection',
     )
-    ai_parser.add_argument('--rounds', type=int, default=1, help='OpenAI refinement rounds when --ai is enabled')
-    ai_parser.add_argument('--model', default='gpt-audio', help='OpenAI audio-capable model for A/B judging when --ai is enabled')
     ai_parser.add_argument(
         '--jobs',
         type=int,
         default=max(1, _env_int('MASTERING_JOBS', 1)),
         help='Parallel worker processes for initial candidate rendering; use 2-4 conservatively for VST stability',
-    )
-    openai_group = ai_parser.add_mutually_exclusive_group()
-    openai_group.add_argument(
-        '--ai',
-        dest='use_ai',
-        action='store_true',
-        default=False,
-        help='Enable optional OpenAI audio judging/refinement; disabled by default',
-    )
-    openai_group.add_argument(
-        '--no-ai',
-        dest='use_ai',
-        action='store_false',
-        help='Keep OpenAI disabled and use metric/local-model scoring only',
     )
     local_model_group = ai_parser.add_mutually_exclusive_group()
     local_model_group.add_argument(
@@ -377,31 +388,18 @@ def main() -> None:
         action='store_false',
         help='Disable local CLAP/MERT scoring even if MASTERING_LOCAL_MODELS=1',
     )
-    restoration_group = ai_parser.add_mutually_exclusive_group()
-    restoration_group.add_argument(
-        '--apollo',
-        dest='apollo',
-        action='store_true',
-        default=None,
-        help='Enable optional Apollo restoration branch before selected mastering candidates',
-    )
-    restoration_group.add_argument(
-        '--no-apollo',
-        dest='apollo',
-        action='store_false',
-        help='Disable Apollo restoration even if MASTERING_APOLLO=1',
-    )
-    ai_parser.add_argument(
-        '--apollo-only',
-        action='store_true',
-        help='Run only Apollo restoration and skip all VST mastering candidates',
-    )
     ai_parser.add_argument('--json-out', help='Optional path for machine-readable AI mastering report')
 
     single_parser = subcommands.add_parser('single', help='Render one mastered WAV')
     single_parser.add_argument('input', help='Input WAV path')
     single_parser.add_argument('output', help='Output WAV path')
     single_parser.add_argument('--target-lufs', type=float, default=-14.0, metavar='DB')
+
+    clip_parser = subcommands.add_parser('clip-test', help='Create a short first/loudest WAV clip for fast test renders')
+    clip_parser.add_argument('--input', required=True, help='Input WAV path')
+    clip_parser.add_argument('--output', required=True, help='Output WAV path')
+    clip_parser.add_argument('--mode', choices=('first', 'loudest'), default='loudest')
+    clip_parser.add_argument('--seconds', type=float, default=30.0)
 
     subcommands.add_parser('check', help='Verify VST3 plugins and presets load')
 
@@ -417,7 +415,7 @@ def main() -> None:
 
     prefer_parser = subcommands.add_parser('prefer', help='Record your preferred candidate for a run')
     prefer_parser.add_argument('run_id', type=int, help='Run ID from history DB (shown after ai-render)')
-    prefer_parser.add_argument('candidate', help='Candidate name, e.g. ai_punch_warm')
+    prefer_parser.add_argument('candidate', help='Candidate name, e.g. warm_analog')
     prefer_parser.add_argument('--tags', default='', help='Comma-separated reason tags, e.g. better_low_end,release_ready')
 
     pick_parser = subcommands.add_parser(
@@ -432,8 +430,6 @@ def main() -> None:
 
     history_parser = subcommands.add_parser('history', help='Show recent mastering runs and preferences')
     history_parser.add_argument('--last', type=int, default=10, metavar='N', help='Number of recent runs to show')
-
-    subcommands.add_parser('train-ranker', help='Train taste ranker from preference history')
 
     html_parser = subcommands.add_parser('html-report', help='Generate visual HTML from an ai-mastering-report JSON file')
     html_parser.add_argument('json', help='Path to ai-mastering-report.json')
@@ -460,19 +456,18 @@ def main() -> None:
             args.basename,
             args.target_lufs,
             args.style,
-            args.rounds,
-            args.use_ai,
-            args.model,
             args.local_models,
             args.json_out,
             args.jobs,
-            args.apollo,
-            args.apollo_only,
         )
         return
 
     if args.command == 'single':
         cmd_master(args.input, args.output, args.target_lufs)
+        return
+
+    if args.command == 'clip-test':
+        cmd_clip_test(args.input, args.output, args.mode, args.seconds)
         return
 
     if args.command == 'models-check':
@@ -491,10 +486,6 @@ def main() -> None:
 
     if args.command == 'history':
         cmd_history(args.last)
-        return
-
-    if args.command == 'train-ranker':
-        cmd_train_ranker()
         return
 
     if args.command == 'html-report':

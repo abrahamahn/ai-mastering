@@ -76,8 +76,9 @@ class HistoryDB:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or _db_path()
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(str(self._path))
+        self._con = sqlite3.connect(str(self._path), timeout=30.0)
         self._con.row_factory = sqlite3.Row
+        self._con.execute("PRAGMA busy_timeout=30000")
         self._con.executescript(_SCHEMA)
         self._con.commit()
 

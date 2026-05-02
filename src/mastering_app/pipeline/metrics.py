@@ -42,7 +42,7 @@ def collect_metrics(audio: np.ndarray, sr: int) -> dict[str, float]:
     air_db = measure_band_db(audio, sr, 8000.0, min(16000.0, sr * 0.45))
     fizz_db = measure_band_db(audio, sr, 8000.0, min(14000.0, sr * 0.45))
     lufs = measure_integrated_lufs(audio, sr)
-    true_peak = measure_true_peak_dbfs(audio)
+    true_peak = measure_true_peak_dbfs(audio, sr)
     high_side_to_mid_db = measure_band_side_to_mid_db(audio, sr, 6000.0, min(14000.0, sr * 0.45))
     presence_side_to_mid_db = measure_band_side_to_mid_db(audio, sr, 2000.0, 6000.0)
     high_band_correlation = measure_band_correlation(audio, sr, 6000.0, min(14000.0, sr * 0.45))

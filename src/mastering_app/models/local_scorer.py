@@ -137,15 +137,12 @@ def _apply_mert_scores(
             embedding = scorer.embed(audio, candidate_sr)
 
         preservation = cosine_similarity(source_embedding, embedding)
-        creative = bool((candidate.get("settings") or {}).get("creative_mode"))
-        preservation_floor = 0.88 if creative else 0.92
+        preservation_floor = 0.92
         if candidate["name"] == "original":
             preservation_adjustment = 0.0
         elif preservation < preservation_floor:
-            # Hard guardrail: content damaged too much by processing. Creative candidates
-            # get a lower floor because intentional tone/color changes should not be
-            # punished as heavily as accidental content drift.
-            preservation_adjustment = -7.0 if creative else -12.0
+            # Hard guardrail: content damaged too much by processing.
+            preservation_adjustment = -12.0
         else:
             # Small bonus for closeness once past guardrail; original no longer wins by default
             preservation_adjustment = float(np.clip((preservation - 0.90) * 10.0, 0.0, 2.0))
