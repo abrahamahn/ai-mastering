@@ -33,10 +33,12 @@ Options:
   --fast        disable optional CLAP/MERT local model scoring for this run
   --jobs N      parallel candidate render jobs
   --target N    target LUFS, default from MASTERING_PRIMARY_LUFS or -14
+  --reuse-output
+                write directly to <input folder>/masters instead of a timestamped run folder
 
 Defaults:
   no args       newest source WAV in /mnt/c/Production/music/Submission
-  output dir    <input folder>/masters
+  output dir    <input folder>/masters/<basename>_<timestamp>
   basename      input filename without .wav
 
 Examples:
@@ -49,6 +51,7 @@ EOF
 }
 
 apollo_flag=""
+reuse_output=0
 positionals=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -83,6 +86,10 @@ while [ "$#" -gt 0 ]; do
       fi
       target_lufs="$2"
       shift 2
+      ;;
+    --reuse-output)
+      reuse_output=1
+      shift
       ;;
     --)
       shift
@@ -144,8 +151,15 @@ else
 fi
 
 input_dir="$(dirname "$input_wav")"
-out_dir="$(normalize_path_arg "${2:-$input_dir/masters}")"
 basename="${3:-$(basename "${input_wav%.*}")}"
+if [ -n "${2:-}" ]; then
+  out_dir="$(normalize_path_arg "$2")"
+elif [ "$reuse_output" = "1" ]; then
+  out_dir="$input_dir/masters"
+else
+  run_stamp="$(date +%Y%m%d-%H%M%S)"
+  out_dir="$input_dir/masters/${basename}_${run_stamp}"
+fi
 
 echo "[master] Source:  $input_wav"
 echo "[master] Output:  $out_dir"

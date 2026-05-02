@@ -58,7 +58,7 @@ Use the root launcher for day-to-day tests:
 Defaults:
 
 1. `./master.sh` masters the newest source WAV in `/mnt/c/Production/music/Submission`.
-2. Output goes to `<input folder>/masters`.
+2. Output goes to `<input folder>/masters/<basename>_<timestamp>` to avoid overwriting files that a DAW or Windows may be holding open.
 3. `MASTERING_JOBS=2` renders initial candidates in parallel by default through the wrapper.
 4. `MASTERING_LOCAL_MODELS=0` disables optional CLAP/MERT scoring when you want faster offline tests.
 
