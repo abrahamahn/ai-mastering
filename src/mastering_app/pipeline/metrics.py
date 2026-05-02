@@ -16,7 +16,7 @@ from ..audio.analysis import (
     measure_stereo_correlation,
     measure_true_peak_dbfs,
 )
-from .render import STREAMING_REFERENCE_LUFS
+from .render import STREAMING_REFERENCE_LUFS, TRUE_PEAK_CEILING_DBFS
 
 
 def window_crest_stats(audio: np.ndarray, sr: int) -> dict[str, float]:
@@ -84,6 +84,18 @@ def collect_metrics(audio: np.ndarray, sr: int) -> dict[str, float]:
         "hf_ratio": measure_hf_ratio(audio, sr, threshold_hz=8000.0),
     }
     metrics.update(window_crest_stats(audio, sr))
+    playback_gain = normalized_playback_gain_db(metrics)
+    metrics.update({
+        "streaming_playback_gain_db": playback_gain,
+        "normalized_loud_window_rms_dbfs": metrics["loud_window_rms_dbfs"] + playback_gain,
+        "normalized_true_peak_dbfs": metrics["true_peak_dbfs"] + playback_gain,
+        "normalized_presence_db": metrics["presence_db"] + playback_gain,
+        "normalized_vocal_presence_db": metrics["vocal_presence_db"] + playback_gain,
+        "normalized_harsh_db": metrics["harsh_db"] + playback_gain,
+        "normalized_fizz_db": metrics["fizz_db"] + playback_gain,
+        "normalized_punch_db": metrics["punch_db"] + playback_gain,
+        "normalized_low_mid_db": metrics["low_mid_db"] + playback_gain,
+    })
     return metrics
 
 
@@ -95,9 +107,27 @@ def source_is_harsh(metrics: dict[str, float]) -> bool:
     )
 
 
+def normalized_playback_gain_db(
+    metrics: dict[str, float],
+    reference_lufs: float = STREAMING_REFERENCE_LUFS,
+    true_peak_ceiling_dbfs: float = TRUE_PEAK_CEILING_DBFS,
+) -> float:
+    """Effective playback gain when auditioned at the streaming reference.
+
+    This is an evaluation-only normalization model. It allows positive gain for
+    quieter candidates only when true-peak headroom permits it, and applies
+    negative gain for louder masters that would be turned down by streaming
+    normalization.
+    """
+    desired_gain = reference_lufs - metrics["lufs"]
+    if desired_gain > 0.0:
+        return float(min(desired_gain, true_peak_ceiling_dbfs - metrics["true_peak_dbfs"]))
+    return float(desired_gain)
+
+
 def streaming_gain_db(metrics: dict[str, float]) -> float:
-    """Pessimistic down-only normalization gain for playback comparison."""
-    return min(0.0, STREAMING_REFERENCE_LUFS - metrics["lufs"])
+    """Backward-compatible name for normalized playback gain."""
+    return normalized_playback_gain_db(metrics)
 
 
 def normalized_band_delta(

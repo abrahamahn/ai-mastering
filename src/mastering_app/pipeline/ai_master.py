@@ -20,6 +20,7 @@ from .scoring import (
     score_candidate as _score_candidate,
 )
 from .settings import MasteringSettings, candidate_settings
+from .targets import TargetProfile, select_target_profile
 from ..audio.source_match import restore_source_balance
 from ..models.local_scorer import apply_local_model_scores
 
@@ -36,6 +37,7 @@ def _render_candidate(
     basename: str,
     requested_target: float,
     settings: MasteringSettings,
+    target_profile: TargetProfile,
 ) -> dict[str, Any]:
     effective_target, target_note = _resolve_effective_target(requested_target, source_metrics["lufs"])
     name = _safe_name(settings.name)
@@ -68,7 +70,7 @@ def _render_candidate(
     )
     sf.write(str(output_path), mastered.T, sr, subtype="PCM_24")
     metrics = _metrics(mastered, sr)
-    score, score_notes = _score_candidate(source_metrics, metrics, effective_target)
+    score, score_notes = _score_candidate(source_metrics, metrics, effective_target, target_profile)
     warnings = list(qc.get("warnings", []))
     if target_note:
         warnings.append(target_note)
@@ -99,6 +101,7 @@ def _render_candidate_from_path(
     basename: str,
     requested_target: float,
     settings: MasteringSettings,
+    target_profile: TargetProfile,
 ) -> dict[str, Any]:
     source_audio, sr = _read_audio(input_path)
     return _render_candidate(
@@ -109,6 +112,7 @@ def _render_candidate_from_path(
         basename,
         requested_target,
         settings,
+        target_profile,
     )
 
 
@@ -121,11 +125,12 @@ def _render_initial_candidates(
     basename: str,
     target_lufs: float,
     settings_catalog: list[MasteringSettings],
+    target_profile: TargetProfile,
     jobs: int,
 ) -> list[dict[str, Any]]:
     if jobs <= 1 or len(settings_catalog) <= 1:
         return [
-            _render_candidate(source_audio, sr, source_metrics, out_dir, basename, target_lufs, settings)
+            _render_candidate(source_audio, sr, source_metrics, out_dir, basename, target_lufs, settings, target_profile)
             for settings in settings_catalog
         ]
 
@@ -142,6 +147,7 @@ def _render_initial_candidates(
                 basename,
                 target_lufs,
                 settings,
+                target_profile,
             ): index
             for index, settings in enumerate(settings_catalog)
         }
@@ -196,10 +202,12 @@ def render_ai_master(
     source_audio, sr = _read_audio(str(input_path))
     source_metrics = _metrics(source_audio, sr)
     comment_intent = parse_comment_intent(style)
+    target_profile = select_target_profile(comment_intent.tags)
     print(
         "  [ai-master] Comment intent: "
         f"{', '.join(comment_intent.tags) if comment_intent.tags else 'neutral'}"
     )
+    print(f"  [ai-master] Target profile: {target_profile.name}")
     candidates: list[dict[str, Any]] = [_source_candidate(input_path, out_dir, basename, source_audio, sr)]
 
     settings_catalog = apply_intent_to_settings(candidate_settings(style), comment_intent)
@@ -213,6 +221,7 @@ def render_ai_master(
             basename,
             target_lufs,
             settings_catalog,
+            target_profile,
             max(1, jobs),
         )
     )
@@ -229,9 +238,10 @@ def render_ai_master(
         "basename": basename,
         "style": style,
         "comment_intent": comment_intent.to_dict(),
+        "target_profile": target_profile.to_dict(),
         "target_lufs": target_lufs,
         "jobs": max(1, jobs),
-        "selection": "deterministic release guards + local CLAP/MERT + intent bias",
+        "selection": "target profile + release guards + local CLAP/MERT + intent bias",
         "source_metrics": source_metrics,
         "local_model_scoring": local_model_report,
         "best_candidate": best["name"],

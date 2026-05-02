@@ -5,8 +5,9 @@ from typing import Any
 import numpy as np
 
 from .intent import apply_intent_score_bias
-from .metrics import normalized_band_delta, source_is_harsh
+from .metrics import normalized_band_delta, normalized_playback_gain_db, source_is_harsh
 from .render import STREAMING_REFERENCE_LUFS
+from .targets import TargetProfile, TargetRange
 
 
 def pillar_mastering_score(
@@ -112,10 +113,155 @@ def pillar_mastering_score(
     return float(np.clip(score, -24.0, 42.0)), notes
 
 
+def _target_value(
+    source_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+    target: TargetRange,
+) -> float:
+    if target.mode == "absolute":
+        return float(candidate_metrics[target.metric])
+    if target.mode == "normalized_delta":
+        return normalized_band_delta(source_metrics, candidate_metrics, target.metric)
+    return float(candidate_metrics[target.metric] - source_metrics[target.metric])
+
+
+def target_profile_score(
+    source_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+    profile: TargetProfile,
+) -> tuple[float, list[str]]:
+    """Score candidate against the selected target outcome, not only the source."""
+    score = 0.0
+    notes: list[str] = []
+
+    for target in profile.ranges:
+        value = _target_value(source_metrics, candidate_metrics, target)
+        low = target.low
+        high = target.high
+        span = max(0.25, high - low)
+        label = target.label or target.metric
+
+        if low <= value <= high:
+            score += target.weight
+            if target.weight >= 6.0:
+                notes.append(f"target hit {label} {value:+.2f}")
+            continue
+
+        miss = low - value if value < low else value - high
+        penalty = min(target.weight * 1.5, (miss / span) * target.weight)
+        score -= penalty
+        if penalty >= 1.0:
+            notes.append(
+                f"target miss {label} {value:+.2f} "
+                f"(goal {low:+.2f}..{high:+.2f})"
+            )
+
+    return float(np.clip(score, -35.0, 60.0)), notes
+
+
+def normalized_playback_score(
+    source_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+) -> tuple[float, list[str]]:
+    """Score how the master feels after streaming normalization.
+
+    Output LUFS is allowed to vary. This score asks whether the candidate keeps
+    musical energy, vocal presence, punch, width, and de-harshing when both the
+    source and candidate are auditioned at normalized playback loudness.
+    """
+    score = 0.0
+    notes: list[str] = []
+
+    source_gain = source_metrics.get("streaming_playback_gain_db", normalized_playback_gain_db(source_metrics))
+    candidate_gain = candidate_metrics.get("streaming_playback_gain_db", normalized_playback_gain_db(candidate_metrics))
+
+    loud_rms_delta = (
+        candidate_metrics["loud_window_rms_dbfs"]
+        + candidate_gain
+        - source_metrics["loud_window_rms_dbfs"]
+        - source_gain
+    )
+    vocal_delta = normalized_band_delta(source_metrics, candidate_metrics, "vocal_presence_db")
+    presence_delta = normalized_band_delta(source_metrics, candidate_metrics, "presence_db")
+    harsh_delta = normalized_band_delta(source_metrics, candidate_metrics, "harsh_db")
+    fizz_delta = normalized_band_delta(source_metrics, candidate_metrics, "fizz_db")
+    punch_delta = normalized_band_delta(source_metrics, candidate_metrics, "punch_db")
+    low_mid_delta = normalized_band_delta(source_metrics, candidate_metrics, "low_mid_db")
+    punch_to_mud_delta = candidate_metrics["punch_to_mud_db"] - source_metrics["punch_to_mud_db"]
+    presence_width_delta = candidate_metrics["presence_side_to_mid_db"] - source_metrics["presence_side_to_mid_db"]
+    loud_crest_delta = candidate_metrics["loud_window_crest_db"] - source_metrics["loud_window_crest_db"]
+    plr_delta = candidate_metrics["plr_db"] - source_metrics["plr_db"]
+
+    if 0.15 <= loud_rms_delta <= 1.4:
+        score += min(5.0, loud_rms_delta * 3.0)
+        notes.append(f"normalized chorus energy improved {loud_rms_delta:+.2f} dB")
+    elif loud_rms_delta < -0.6:
+        score -= min(7.0, abs(loud_rms_delta + 0.6) * 3.0)
+        notes.append(f"normalized chorus energy smaller {loud_rms_delta:+.2f} dB")
+    elif loud_rms_delta > 2.1:
+        score -= min(6.0, (loud_rms_delta - 2.1) * 2.5)
+        notes.append(f"normalized chorus may feel over-dense {loud_rms_delta:+.2f} dB")
+
+    if -0.25 <= vocal_delta <= 1.0:
+        score += min(5.0, max(0.0, vocal_delta + 0.25) * 2.2)
+    elif vocal_delta < -0.65:
+        score -= min(9.0, abs(vocal_delta + 0.65) * 4.5)
+        notes.append(f"normalized vocal presence lost {vocal_delta:+.2f} dB")
+
+    if presence_delta < -0.8:
+        score -= min(7.0, abs(presence_delta + 0.8) * 3.5)
+        notes.append(f"normalized mid presence recessed {presence_delta:+.2f} dB")
+
+    if -2.6 <= harsh_delta <= -0.25 and vocal_delta >= -0.65:
+        score += min(5.0, abs(harsh_delta) * 1.5)
+        notes.append(f"normalized harshness reduced {harsh_delta:+.2f} dB")
+    elif harsh_delta > 0.2:
+        score -= min(8.0, harsh_delta * 3.0)
+        notes.append(f"normalized harshness increased {harsh_delta:+.2f} dB")
+
+    if -3.0 <= fizz_delta <= -0.25 and vocal_delta >= -0.65:
+        score += min(5.0, abs(fizz_delta) * 1.3)
+        notes.append(f"normalized AI fizz reduced {fizz_delta:+.2f} dB")
+    elif fizz_delta > 0.2:
+        score -= min(8.0, fizz_delta * 2.8)
+        notes.append(f"normalized AI fizz increased {fizz_delta:+.2f} dB")
+
+    if 0.15 <= punch_delta <= 1.6 and punch_to_mud_delta >= -0.2:
+        score += min(4.0, punch_delta * 2.0)
+    elif punch_delta < -0.5:
+        score -= min(5.0, abs(punch_delta + 0.5) * 2.5)
+        notes.append(f"normalized punch reduced {punch_delta:+.2f} dB")
+
+    if 0.10 <= low_mid_delta <= 1.4:
+        score += min(4.0, low_mid_delta * 1.8)
+    elif low_mid_delta > 2.1:
+        score -= min(6.0, (low_mid_delta - 2.1) * 3.0)
+        notes.append(f"normalized low-mid may feel boxy {low_mid_delta:+.2f} dB")
+
+    if presence_width_delta >= 0.1:
+        score += min(3.0, presence_width_delta * 1.2)
+    elif presence_width_delta < -0.6:
+        score -= min(6.0, abs(presence_width_delta + 0.6) * 3.0)
+        notes.append(f"normalized presence image narrowed {presence_width_delta:+.2f} dB")
+
+    if loud_crest_delta < -0.9:
+        score -= min(8.0, abs(loud_crest_delta + 0.9) * 4.0)
+        notes.append(f"normalized playback loses chorus crest {loud_crest_delta:+.2f} dB")
+    elif loud_crest_delta > -0.2:
+        score += min(3.0, (loud_crest_delta + 0.2) * 1.2)
+
+    if plr_delta < -1.0:
+        score -= min(6.0, abs(plr_delta + 1.0) * 3.0)
+        notes.append(f"normalized playback PLR reduced {plr_delta:+.2f} dB")
+
+    return float(np.clip(score, -28.0, 38.0)), notes
+
+
 def score_candidate(
     source_metrics: dict[str, float],
     candidate_metrics: dict[str, float],
     target_lufs: float,
+    target_profile: TargetProfile | None = None,
 ) -> tuple[float, list[str]]:
     score = 100.0
     notes: list[str] = []
@@ -236,6 +382,19 @@ def score_candidate(
     if abs(pillar_score) >= 1.0:
         notes.append(f"pillar mastering score {pillar_score:+.1f}")
     notes.extend(pillar_notes)
+
+    if target_profile is not None:
+        target_score, target_notes = target_profile_score(source_metrics, candidate_metrics, target_profile)
+        score += target_score
+        if abs(target_score) >= 1.0:
+            notes.append(f"target profile {target_profile.name} {target_score:+.1f}")
+        notes.extend(target_notes)
+
+    playback_score, playback_notes = normalized_playback_score(source_metrics, candidate_metrics)
+    score += playback_score
+    if abs(playback_score) >= 1.0:
+        notes.append(f"normalized playback score {playback_score:+.1f}")
+    notes.extend(playback_notes)
 
     return float(round(score, 3)), notes
 

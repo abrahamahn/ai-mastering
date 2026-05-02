@@ -26,6 +26,7 @@ def render_ai_html_report(report: dict[str, Any]) -> str:
     )
     cards = "\n".join(_candidate_card(candidate, source_metrics, best_name) for candidate in candidates)
     intent_section = _intent_section(report.get("comment_intent") or {})
+    target_section = _target_section(report.get("target_profile") or {})
     restoration_section = _restoration_section(report.get("restoration") or {})
 
     return f"""<!doctype html>
@@ -295,6 +296,7 @@ def render_ai_html_report(report: dict[str, Any]) -> str:
   </header>
   <main>
     {intent_section}
+    {target_section}
     {restoration_section}
     <h2>Candidate Overview</h2>
     <section class="panel">
@@ -304,6 +306,7 @@ def render_ai_html_report(report: dict[str, Any]) -> str:
             <th>Candidate</th>
             <th>Score</th>
             <th>LUFS</th>
+            <th>Norm Energy</th>
             <th>Loud Crest</th>
             <th>Presence</th>
             <th>Air</th>
@@ -353,6 +356,31 @@ def _intent_section(intent: dict[str, Any]) -> str:
     </section>"""
 
 
+def _target_section(profile: dict[str, Any]) -> str:
+    if not profile:
+        return ""
+    ranges = profile.get("ranges") or []
+    rows = "\n".join(
+        f"""<tr>
+          <td>{escape(str(item.get("label") or item.get("metric") or ""))}</td>
+          <td>{escape(str(item.get("mode") or ""))}</td>
+          <td>{_fmt(item.get("low"))} to {_fmt(item.get("high"))}</td>
+          <td>{_fmt(item.get("weight"))}</td>
+        </tr>"""
+        for item in ranges
+    )
+    return f"""<h2>Target Profile</h2>
+    <section class="panel">
+      <p><strong>{escape(str(profile.get("name", "target")))}</strong> — {escape(str(profile.get("description", "")))}</p>
+      <table>
+        <thead>
+          <tr><th>Goal</th><th>Mode</th><th>Target Range</th><th>Weight</th></tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>"""
+
+
 def _restoration_section(restoration: dict[str, Any]) -> str:
     if not restoration:
         return ""
@@ -385,6 +413,7 @@ def _overview_row(candidate: dict[str, Any], source_metrics: Metric, best_name: 
       <td><strong>{escape(str(candidate.get("name", "")))}</strong>{best}</td>
       <td>{_fmt(candidate.get("score"), digits=1)}</td>
       <td>{_fmt(metrics.get("lufs"), digits=2)}</td>
+      <td>{_metric_delta(metrics, source_metrics, "normalized_loud_window_rms_dbfs", "dB", positive_good=True)}</td>
       <td>{_metric_delta(metrics, source_metrics, "loud_window_crest_db", "dB", positive_good=True)}</td>
       <td>{_metric_delta(metrics, source_metrics, "presence_db", "dB", positive_good=True)}</td>
       <td>{_metric_delta(metrics, source_metrics, "air_db", "dB", positive_good=False)}</td>
@@ -406,6 +435,7 @@ def _candidate_card(candidate: dict[str, Any], source_metrics: Metric, best_name
         _metric_card(label, metrics, source_metrics, key, unit, positive_good, limit)
         for label, key, unit, positive_good, limit in [
             ("LUFS", "lufs", "LUFS", False, 4.0),
+            ("Norm Chorus RMS", "normalized_loud_window_rms_dbfs", "dBFS", True, 4.0),
             ("Loud Section Crest", "loud_window_crest_db", "dB", True, 4.0),
             ("PLR", "plr_db", "dB", True, 4.0),
             ("Punch / Mud", "punch_to_mud_db", "dB", True, 4.0),
@@ -481,6 +511,11 @@ def _chain_stages(settings: dict[str, Any] | None, candidate: dict[str, Any] | N
             "kind": "optional",
             "details": _params(settings, ["gullfoss_recover", "gullfoss_tame", "gullfoss_brighten", "gullfoss_boost_db"]),
         })
+    stages.extend([
+        {"name": "Multipass", "kind": "core", "details": _params(settings, ["multipass_macro_cap"])},
+        {"name": "soothe2 pass 1", "kind": "core", "details": _params(settings, ["soothe_depth_scale", "soothe1_mix"])},
+        {"name": "soothe2 pass 2", "kind": "core", "details": _params(settings, ["soothe2_depth_scale", "soothe2_mix"])},
+    ])
     stages.append({"name": "VEQ-MG4+", "kind": "core", "details": "Warmth / low-mid color"})
     if settings.get("bax_enabled"):
         stages.append({
@@ -488,17 +523,6 @@ def _chain_stages(settings: dict[str, Any] | None, candidate: dict[str, Any] | N
             "kind": "optional",
             "details": _params(settings, ["bax_low_shelf_db", "bax_high_shelf_db"]),
         })
-    if settings.get("bx_digital_enabled"):
-        stages.append({
-            "name": "bx_digital V3",
-            "kind": "optional",
-            "details": _params(settings, ["bx_stereo_width", "bx_mono_maker_enabled", "bx_mono_maker_hz"]),
-        })
-    stages.extend([
-        {"name": "soothe2 pass 1", "kind": "core", "details": _params(settings, ["soothe_depth_scale", "soothe1_mix"])},
-        {"name": "soothe2 pass 2", "kind": "core", "details": _params(settings, ["soothe2_depth_scale", "soothe2_mix"])},
-        {"name": "Multipass", "kind": "core", "details": _params(settings, ["multipass_macro_cap"])},
-    ])
     if settings.get("low_end_focus_enabled"):
         stages.append({
             "name": "Ozone Low End Focus",
@@ -525,6 +549,12 @@ def _chain_stages(settings: dict[str, Any] | None, candidate: dict[str, Any] | N
                 "hf_guard_frequency_hz",
                 "hf_guard_max_reduction_db",
             ]),
+        })
+    if settings.get("bx_digital_enabled"):
+        stages.append({
+            "name": "bx_digital V3",
+            "kind": "optional",
+            "details": _params(settings, ["bx_stereo_width", "bx_mono_maker_enabled", "bx_mono_maker_hz"]),
         })
     if settings.get("ozone_imager_enabled"):
         stages.append({

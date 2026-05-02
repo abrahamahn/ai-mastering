@@ -346,49 +346,18 @@ def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringS
         _try_set(gullfoss, PARAMS['gullfoss_master']['gain_db'], 0.0)
         audio = _apply(gullfoss, audio, sr)
 
-    # ── Stage 2: VEQ-MG4+ — vintage EQ colour ────────────────────────────────
-    # Fixed character stage; no analysis needed.
-    stage("VEQ-MG4+")
-    veq = _load('veq_mg4', 'VEQ-MG4+.vstpreset')
-    audio = _apply(veq, audio, sr)
-
-    if settings.bax_enabled:
-        stage(
-            "Dangerous BAX EQ Master  "
-            f"(low={settings.bax_low_shelf_db:+.1f} dB, high={settings.bax_high_shelf_db:+.1f} dB)"
-        )
-        bax = _load('dangerous_bax_master')
-        _try_set(bax, PARAMS['dangerous_bax_master']['bypass'], False)
-        _try_set(bax, PARAMS['dangerous_bax_master']['link'], True)
-        _try_set(bax, PARAMS['dangerous_bax_master']['low_shelf_level_1_db'], settings.bax_low_shelf_db)
-        _try_set(bax, PARAMS['dangerous_bax_master']['low_shelf_level_2_db'], settings.bax_low_shelf_db)
-        _try_set(bax, PARAMS['dangerous_bax_master']['high_shelf_level_1_db'], settings.bax_high_shelf_db)
-        _try_set(bax, PARAMS['dangerous_bax_master']['high_shelf_level_2_db'], settings.bax_high_shelf_db)
-        _try_set(bax, PARAMS['dangerous_bax_master']['output_level_1_db'], 0.0)
-        _try_set(bax, PARAMS['dangerous_bax_master']['output_level_2_db'], 0.0)
-        audio = _apply(bax, audio, sr)
-
-    if settings.bx_digital_enabled:
-        mono_text = (
-            f", mono maker={settings.bx_mono_maker_hz:.0f} Hz"
-            if settings.bx_mono_maker_enabled
-            else ""
-        )
-        stage(f"bx_digital V3  (width={settings.bx_stereo_width:.1f}%{mono_text})")
-        bx = _load('bx_digital_v3')
-        _try_set(bx, PARAMS['bx_digital_v3']['bypass'], False)
-        _try_set(bx, PARAMS['bx_digital_v3']['auto_listen_active'], False)
-        _try_set(bx, PARAMS['bx_digital_v3']['auto_solo'], False)
-        _try_set(bx, PARAMS['bx_digital_v3']['solo_1'], False)
-        _try_set(bx, PARAMS['bx_digital_v3']['solo_2'], False)
-        _try_set(bx, PARAMS['bx_digital_v3']['modus'], 'M/S Master')
-        _try_set(bx, PARAMS['bx_digital_v3']['stereo_width'], settings.bx_stereo_width)
-        _try_set(bx, PARAMS['bx_digital_v3']['mono_maker_active'], settings.bx_mono_maker_enabled)
-        _try_set(bx, PARAMS['bx_digital_v3']['mono_maker_frequency_hz'], f"{settings.bx_mono_maker_hz:.0f}")
-        audio = _apply(bx, audio, sr)
+    # ── Stage 2: Multipass — early HF artifact trim ──────────────────────────
+    # Analyze after corrective EQ/Gullfoss but before broad tone colour, so the
+    # fake AI shimmer is controlled before it gets saturated or widened.
+    hf_ratio = measure_hf_ratio(audio, sr, threshold_hz=8000.0)
+    hf_macro = min(scale_multipass_macro(hf_ratio), settings.multipass_macro_cap)
+    stage(f"Multipass  (hf_ratio={hf_ratio:.3f} -> macro_1={hf_macro:.1f}%)")
+    mp = _load('multipass', 'Multipass.vstpreset')
+    _try_set(mp, PARAMS['multipass']['hf_macro'], hf_macro)
+    audio = _apply(mp, audio, sr)
 
     # ── Stage 3: soothe2 pass 1 — resonance suppression ──────────────────────
-    # Analyze AFTER EQ+colour: how resonant is the signal now?
+    # Analyze after early HF trim: remaining narrowness determines pass depth.
     flatness = measure_spectral_flatness(audio, sr)
     depth = scale_soothe_depth(flatness)
     depth *= settings.soothe_depth_scale
@@ -408,14 +377,28 @@ def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringS
     _try_set(s2, PARAMS['soothe2']['mix'], settings.soothe2_mix)
     audio = _apply(s2, audio, sr)
 
-    # ── Stage 5: Multipass — HF band compression ─────────────────────────────
-    # Analyze AFTER soothe: how much HF energy remains after resonance removal?
-    hf_ratio = measure_hf_ratio(audio, sr, threshold_hz=8000.0)
-    hf_macro = min(scale_multipass_macro(hf_ratio), settings.multipass_macro_cap)
-    stage(f"Multipass  (hf_ratio={hf_ratio:.3f} -> macro_1={hf_macro:.1f}%)")
-    mp = _load('multipass', 'Multipass.vstpreset')
-    _try_set(mp, PARAMS['multipass']['hf_macro'], hf_macro)
-    audio = _apply(mp, audio, sr)
+    # ── Stage 5: VEQ-MG4+ — vintage EQ colour ────────────────────────────────
+    # Broad analogue colour happens after cleanup so it adds tone instead of
+    # exaggerating resonances and AI edge.
+    stage("VEQ-MG4+")
+    veq = _load('veq_mg4', 'VEQ-MG4+.vstpreset')
+    audio = _apply(veq, audio, sr)
+
+    if settings.bax_enabled:
+        stage(
+            "Dangerous BAX EQ Master  "
+            f"(low={settings.bax_low_shelf_db:+.1f} dB, high={settings.bax_high_shelf_db:+.1f} dB)"
+        )
+        bax = _load('dangerous_bax_master')
+        _try_set(bax, PARAMS['dangerous_bax_master']['bypass'], False)
+        _try_set(bax, PARAMS['dangerous_bax_master']['link'], True)
+        _try_set(bax, PARAMS['dangerous_bax_master']['low_shelf_level_1_db'], settings.bax_low_shelf_db)
+        _try_set(bax, PARAMS['dangerous_bax_master']['low_shelf_level_2_db'], settings.bax_low_shelf_db)
+        _try_set(bax, PARAMS['dangerous_bax_master']['high_shelf_level_1_db'], settings.bax_high_shelf_db)
+        _try_set(bax, PARAMS['dangerous_bax_master']['high_shelf_level_2_db'], settings.bax_high_shelf_db)
+        _try_set(bax, PARAMS['dangerous_bax_master']['output_level_1_db'], 0.0)
+        _try_set(bax, PARAMS['dangerous_bax_master']['output_level_2_db'], 0.0)
+        audio = _apply(bax, audio, sr)
 
     if settings.low_end_focus_enabled:
         stage(
@@ -504,6 +487,25 @@ def process(audio: np.ndarray, sr: int, target_lufs: float, settings: MasteringS
             f"(hf_ratio={hf_guard['hf_ratio']:.3f}, "
             f"air/presence={hf_guard['air_to_presence_db']:+.1f} dB -> no cut)"
         )
+
+    if settings.bx_digital_enabled:
+        mono_text = (
+            f", mono maker={settings.bx_mono_maker_hz:.0f} Hz"
+            if settings.bx_mono_maker_enabled
+            else ""
+        )
+        stage(f"bx_digital V3  (width={settings.bx_stereo_width:.1f}%{mono_text})")
+        bx = _load('bx_digital_v3')
+        _try_set(bx, PARAMS['bx_digital_v3']['bypass'], False)
+        _try_set(bx, PARAMS['bx_digital_v3']['auto_listen_active'], False)
+        _try_set(bx, PARAMS['bx_digital_v3']['auto_solo'], False)
+        _try_set(bx, PARAMS['bx_digital_v3']['solo_1'], False)
+        _try_set(bx, PARAMS['bx_digital_v3']['solo_2'], False)
+        _try_set(bx, PARAMS['bx_digital_v3']['modus'], 'M/S Master')
+        _try_set(bx, PARAMS['bx_digital_v3']['stereo_width'], settings.bx_stereo_width)
+        _try_set(bx, PARAMS['bx_digital_v3']['mono_maker_active'], settings.bx_mono_maker_enabled)
+        _try_set(bx, PARAMS['bx_digital_v3']['mono_maker_frequency_hz'], f"{settings.bx_mono_maker_hz:.0f}")
+        audio = _apply(bx, audio, sr)
 
     if settings.ozone_imager_enabled:
         correlation = measure_stereo_correlation(audio)

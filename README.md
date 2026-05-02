@@ -1,6 +1,6 @@
 # Source-Aware Suno Mastering
 
-Standalone mastering pipeline for Suno-generated music. The app renders one original reference plus five bounded mastered candidates, scores them against the source, and writes the selected master plus JSON/HTML reports.
+Standalone mastering pipeline for Suno-generated music. The app renders one original reference plus five bounded mastered candidates, scores them against an explicit target profile, normalized-playback metrics, local model adjustments, and safety guards, then writes a model-selected master plus JSON/HTML reports.
 
 The current goal is intentionally narrow:
 
@@ -9,7 +9,7 @@ The current goal is intentionally narrow:
 3. Add analog-style low-mid warmth.
 4. Preserve or improve dynamic punch.
 
-Local CLAP/MERT scoring can be used as a secondary judge. Deterministic audio metrics and release guards remain the primary selector.
+Local CLAP/MERT scoring is available as a secondary judge when the local model dependencies are installed. Deterministic audio metrics, normalized playback behavior, target profiles, and release guards remain the primary selector. The current app does not use OpenAI or any cloud API for scoring.
 
 ## Quick Run
 
@@ -24,17 +24,23 @@ Defaults:
 3. `--jobs N` renders candidates in parallel; the launcher defaults to `2`.
 4. `--fast` disables optional CLAP/MERT scoring for faster offline tests.
 5. The default target is `-14 LUFS`, or `MASTERING_PRIMARY_LUFS` when set.
+6. `--reuse-output` writes directly to `<input folder>/masters` instead of a timestamped run folder.
 
 Fast test mode:
 
 ```bash
-MASTERING_TEST=1
-MASTERING_TEST_MODE=loudest
-MASTERING_TEST_SECONDS=30
-./master.sh --fast /mnt/c/Production/music/Submission/song.wav
+MASTERING_TEST=1 MASTERING_TEST_MODE=loudest MASTERING_TEST_SECONDS=30 \
+  ./master.sh --fast /mnt/c/Production/music/Submission/song.wav
 ```
 
 Use `--no-test` for a full-song render when test mode is enabled.
+
+Equivalent command-line test shortcuts:
+
+```bash
+./master.sh --test --fast /mnt/c/Production/music/Submission/song.wav
+./master.sh --test first --test-seconds 45 --fast /mnt/c/Production/music/Submission/song.wav
+```
 
 ## Candidate Catalog
 
@@ -53,22 +59,30 @@ The unprocessed `original` is always included as a reference and fallback.
 The processing chain is kept focused:
 
 1. Corrective EQ plus candidate-specific Pro-Q shape moves.
-2. Gullfoss Master for bounded recovery/taming.
-3. VEQ-MG4+ and BAX for analog low-mid color where enabled.
-4. bx_digital and Ozone Imager for conservative stereo imaging.
-5. soothe2 and Multipass for high-end resonance and shimmer control.
-6. Ozone Low End Focus and Oxford Inflator only on candidates that need punch/density.
-7. elysia alpha master and Softube Tape for subtle glue and harmonic color.
-8. Streaming HF guard after color stages.
+2. Gullfoss Master where enabled for bounded recovery/taming.
+3. Multipass as early high-end artifact trim before broad color.
+4. soothe2 pass 1 and pass 2 for resonance cleanup after HF trim.
+5. VEQ-MG4+ and BAX for analog low-mid color where enabled.
+6. Ozone Low End Focus only on candidates that need punch definition.
+7. elysia alpha master, Softube Tape, and Oxford Inflator for glue, color, and density.
+8. Streaming HF guard, bx_digital, and Ozone Imager as late safety/imaging stages.
 9. Loudest-section guard and Ozone/Weiss final limiting.
 
-Candidate differences are mainly driven by bounded Pro-Q shape values:
+Candidate differences are driven by bounded per-plugin settings. The main tone knobs are:
 
 ```text
 proq_punch_db
 proq_warmth_db
 proq_presence_db
 proq_air_db
+gullfoss_recover / gullfoss_tame / gullfoss_brighten
+soothe_depth_scale / soothe mix
+multipass_macro_cap
+bax shelf levels
+tape color scale/offset
+inflator effect/curve
+bx_digital / Ozone Imager width values
+loud-section crest guard settings
 ```
 
 This keeps the catalog audible and understandable instead of creating many near-identical outputs.
@@ -77,13 +91,29 @@ This keeps the catalog audible and understandable instead of creating many near-
 
 Selection combines:
 
-1. Deterministic metrics against the source.
-2. A pillar score for de-harshing, width, warmth, and punch.
-3. Deterministic comment-intent bias.
-4. Optional CLAP style delta.
-5. Optional MERT content preservation and reference similarity.
+1. A target-profile score for the selected outcome profile.
+2. Deterministic source-relative safety metrics.
+3. A pillar score for de-harshing, width, warmth, and punch.
+4. Normalized-playback scoring at the streaming reference.
+5. Deterministic comment-intent bias.
+6. Optional CLAP style delta.
+7. Optional MERT content preservation and reference similarity.
 
-Release guards reject candidates that lose too much presence, narrow the image, raise sub/HF artifacts too much, damage high-band correlation, clip peak headroom, or collapse loud-section crest. If all processed candidates fail, the original can remain the selected result.
+The target profile defines desired ranges before chain tuning happens. Current profiles include:
+
+```text
+modern_pop_open
+warm_analog
+deharsh_repair
+punch_forward
+clean_preserve
+```
+
+Each target profile scores concrete outcomes such as vocal presence, harsh/vocal balance, AI fizz/vocal balance, low-mid body, punch-over-mud, presence-band width, side-high stability, artifact reduction, normalized chorus energy, loud-section crest, PLR, and true-peak safety.
+
+The normalized-playback score does not force every export to `-14 LUFS`. It virtually plays the source and each candidate at the streaming reference with true-peak headroom, then scores whether the candidate still feels more musical: chorus energy, vocal presence, punch, de-harshing, width, PLR, and loud-section crest.
+
+Release guards reject candidates that lose too much presence, narrow the image, raise sub/HF artifacts too much, damage high-band correlation, fail to reduce harsh-source air, or collapse loud-section crest. True-peak safety is handled by final gain/ceiling guards and scoring penalties. If all processed candidates fail release guards, the original can remain the selected result.
 
 ## Local Models
 
@@ -105,10 +135,14 @@ Useful settings:
 MASTERING_LOCAL_MODELS=1
 MASTERING_LOCAL_MODELS_OFFLINE=0
 MASTERING_MODEL_DEVICE=auto
+MASTERING_MODEL_CLIP_SECONDS=24
 MASTERING_CLAP=1
 MASTERING_CLAP_MODEL=laion/larger_clap_music
+MASTERING_CLAP_WEIGHT=80
 MASTERING_MERT=1
 MASTERING_MERT_MODEL=m-a-p/MERT-v1-95M
+MASTERING_MERT_PRESERVATION_WEIGHT=180
+MASTERING_MERT_REFERENCE_WEIGHT=110
 MASTERING_REFERENCE_DIR=/mnt/c/path/to/reference-masters
 ```
 
@@ -132,7 +166,12 @@ Base settings:
 ```bash
 WINDOWS_PYTHON=python.exe
 MASTERING_JOBS=2
+MASTERING_TEST=0
+MASTERING_TEST_MODE=loudest
+MASTERING_TEST_SECONDS=
 MASTERING_LOCAL_MODELS=1
+MASTERING_LOCAL_MODELS_OFFLINE=0
+MASTERING_MODEL_DEVICE=auto
 MASTERING_REFERENCE_DIR=
 ```
 
@@ -150,17 +189,23 @@ ai-mastering-report.json
 ai-mastering-report.html
 ```
 
-Open the HTML report to inspect candidate audio, chain stages, active modules, score notes, and metric deltas.
+The run is also saved to `history.db` unless `MASTERING_HISTORY_DB` points somewhere else. Open the HTML report to inspect the selected target profile, candidate audio, chain stages, active modules, score notes, normalized-playback metrics, and metric deltas.
 
 ## Direct Commands
 
 ```bash
+./master.sh --help
 ./scripts/windows/ai-render.sh /mnt/c/path/to/song.wav /mnt/c/path/to/output song -14
+./scripts/windows/render.sh /mnt/c/path/to/song.wav /mnt/c/path/to/output song -14,-12
 ./scripts/windows/check.sh
 ./scripts/windows/discover.sh soothe2
 python master.py --help
+python master.py history --last 10
+python master.py prefer <run_id> warm_analog --tags warm,punchy
 PYTHONPATH=src python -m mastering_app --help
 ```
+
+`pick` is available in the Python CLI for copying a selected WAV and cleaning intermediates, but use the Windows Python path for that command when the run was rendered through Windows VST3 paths.
 
 ## Limits
 

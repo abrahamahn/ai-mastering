@@ -286,7 +286,7 @@ def cmd_history(limit: int) -> None:
     if not rows:
         print("No runs recorded yet.")
         return
-    print(f"{'ID':>4}  {'Date':>20}  {'Basename':<40}  {'Model best':<25}  {'You chose'}")
+    print(f"{'ID':>4}  {'Date':>20}  {'Basename':<40}  {'Selected best':<25}  {'You chose'}")
     print("-" * 115)
     for row in rows:
         date = (row.get("run_at") or "")[:19].replace("T", " ")
