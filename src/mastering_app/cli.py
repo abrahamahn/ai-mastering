@@ -331,7 +331,7 @@ def main() -> None:
     render_parser.add_argument('--targets', default='-14,-12', help='Comma-separated LUFS targets, first is primary')
     render_parser.add_argument('--json-out', help='Optional path for machine-readable render report')
 
-    ai_parser = subcommands.add_parser('ai-render', help='Render bounded candidates, optionally ask OpenAI to refine')
+    ai_parser = subcommands.add_parser('ai-render', help='Render bounded candidates with metric/local-model scoring')
     ai_parser.add_argument('--input', required=True, help='Input WAV path')
     ai_parser.add_argument('--out-dir', required=True, help='Output directory')
     ai_parser.add_argument('--basename', required=True, help='Release basename for output files')
@@ -339,17 +339,30 @@ def main() -> None:
     ai_parser.add_argument(
         '--style',
         default='bright open pop EDM mastering in the style of Chainsmokers',
-        help='Mastering intent passed to the AI judge',
+        help='Mastering intent/comment used by scoring and preset selection',
     )
-    ai_parser.add_argument('--rounds', type=int, default=1, help='AI refinement rounds after initial candidates')
-    ai_parser.add_argument('--model', default='gpt-audio', help='OpenAI audio-capable model for A/B judging')
+    ai_parser.add_argument('--rounds', type=int, default=1, help='OpenAI refinement rounds when --ai is enabled')
+    ai_parser.add_argument('--model', default='gpt-audio', help='OpenAI audio-capable model for A/B judging when --ai is enabled')
     ai_parser.add_argument(
         '--jobs',
         type=int,
         default=max(1, _env_int('MASTERING_JOBS', 1)),
         help='Parallel worker processes for initial candidate rendering; use 2-4 conservatively for VST stability',
     )
-    ai_parser.add_argument('--no-ai', action='store_true', help='Disable OpenAI calls and use metric scoring only')
+    openai_group = ai_parser.add_mutually_exclusive_group()
+    openai_group.add_argument(
+        '--ai',
+        dest='use_ai',
+        action='store_true',
+        default=False,
+        help='Enable optional OpenAI audio judging/refinement; disabled by default',
+    )
+    openai_group.add_argument(
+        '--no-ai',
+        dest='use_ai',
+        action='store_false',
+        help='Keep OpenAI disabled and use metric/local-model scoring only',
+    )
     local_model_group = ai_parser.add_mutually_exclusive_group()
     local_model_group.add_argument(
         '--local-models',
@@ -448,7 +461,7 @@ def main() -> None:
             args.target_lufs,
             args.style,
             args.rounds,
-            not args.no_ai,
+            args.use_ai,
             args.model,
             args.local_models,
             args.json_out,

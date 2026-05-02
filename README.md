@@ -60,12 +60,13 @@ Defaults:
 1. `./master.sh` masters the newest source WAV in `/mnt/c/Production/music/Submission`.
 2. Output goes to `<input folder>/masters/<basename>_<timestamp>` to avoid overwriting files that a DAW or Windows may be holding open.
 3. The default catalog is now six bolder creative candidates instead of the older conservative 16-candidate set.
-4. `MASTERING_LOCAL_MODELS=0` disables optional CLAP/MERT scoring when you want faster offline tests.
+4. `--jobs N` renders VST candidates in parallel; default is `2` through the shell launcher.
+5. `--fast` disables OpenAI judging and optional CLAP/MERT scoring for faster offline tests.
 
 Example fast run:
 
 ```bash
-MASTERING_LOCAL_MODELS=0 MASTERING_JOBS=2 ./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
+./master.sh --fast --jobs 2 /mnt/c/Production/music/Submission/abe002_mulholland.wav
 ```
 
 Optional Apollo restoration branch:
@@ -80,7 +81,7 @@ Set the Apollo checkout once in `.env.local`:
 MASTERING_APOLLO_REPO=/mnt/c/path/to/Apollo
 ```
 
-Use `--fast` if you want to skip optional CLAP/MERT scoring while testing:
+Use `--fast` if you want to skip OpenAI judging and optional CLAP/MERT scoring while testing:
 
 ```bash
 ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
@@ -338,6 +339,8 @@ Important settings:
 
 ```bash
 WINDOWS_PYTHON=python.exe
+MASTERING_OPENAI_JUDGE=0
+MASTERING_JOBS=2
 MASTERING_LOCAL_MODELS=1
 MASTERING_LOCAL_MODELS_OFFLINE=0
 MASTERING_MODEL_DEVICE=auto
@@ -359,6 +362,8 @@ or pass:
 ```bash
 python master.py ai-render ... --no-local-models
 ```
+
+OpenAI judging is intentionally off for the normal workflow. Scoring should come from deterministic metrics plus local CLAP/MERT models.
 
 ## 10. Outputs
 

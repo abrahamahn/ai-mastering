@@ -33,7 +33,7 @@ Options:
   --apollo      enable Apollo restoration candidates for this run
   --apollo-only run only Apollo restoration; skip VST mastering candidates
   --no-apollo   disable Apollo even if MASTERING_APOLLO=1 is set
-  --fast        disable optional CLAP/MERT local model scoring for this run
+  --fast        disable OpenAI judging and optional CLAP/MERT local model scoring
   --jobs N      parallel candidate render jobs
   --target N    target LUFS, default from MASTERING_PRIMARY_LUFS or -14
   --reuse-output
@@ -49,7 +49,7 @@ Examples:
   ./master.sh --apollo /mnt/c/Production/music/Submission/abe002_mulholland.wav
   ./master.sh --apollo-only --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
   ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
-  MASTERING_LOCAL_MODELS=0 ./master.sh
+  ./master.sh --jobs 2 /mnt/c/Production/music/Submission/abe002_mulholland.wav
   MASTERING_REFERENCE_DIR=/mnt/c/Production/music/references ./master.sh
 EOF
 }
@@ -78,6 +78,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --fast)
       export MASTERING_LOCAL_MODELS=0
+      export MASTERING_OPENAI_JUDGE=0
       shift
       ;;
     --jobs)
@@ -131,10 +132,7 @@ find_newest_wav() {
   while IFS= read -r -d '' f; do
     local name
     name="$(basename "$f")"
-    if [[ "$name" =~ _ai_best\.wav$|_original\.wav$|_mastered\.wav$ ]]; then
-      continue
-    fi
-    if [[ "$name" =~ _(transparent_repair|creative_analog|wide_open_color|ai_deglaze|punch_density|dynamic_open|classic_chain|streaming_loud_open|streaming_polish_plus|preserve_open|bright_open_edm|punch_warm|punch_warm_dynamic|controlled_shimmer|deharsh_gullfoss|analog_warm_punch|musical_restore|ai_artifact_repair|dynamic_punch_image|inflator_weiss_density|emotional_vocal|tight_competitive)\.wav$ ]]; then
+    if [[ "$name" =~ _ai_|_original\.wav$|_mastered\.wav$ ]]; then
       continue
     fi
     found="$f"

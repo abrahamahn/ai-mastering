@@ -26,31 +26,7 @@ mkdir -p "$out_dir"
 echo "[ai-render] Input:  $input_path"
 echo "[ai-render] Output: $out_dir"
 
-env_prefix="$(build_env_prefix \
-  OPENAI_API_KEY \
-  MASTERING_JOBS \
-  MASTERING_LOCAL_MODELS \
-  MASTERING_LOCAL_MODELS_OFFLINE \
-  MASTERING_MODEL_DEVICE \
-  MASTERING_MODEL_CLIP_SECONDS \
-  MASTERING_LEGACY_CANDIDATES \
-  MASTERING_APOLLO \
-  MASTERING_APOLLO_ONLY \
-  MASTERING_APOLLO_REPO \
-  MASTERING_APOLLO_PYTHON \
-  MASTERING_APOLLO_SCRIPT \
-  MASTERING_APOLLO_COMMAND \
-  MASTERING_APOLLO_ARGS \
-  MASTERING_CLAP \
-  MASTERING_CLAP_MODEL \
-  MASTERING_CLAP_WEIGHT \
-  MASTERING_MERT \
-  MASTERING_MERT_MODEL \
-  MASTERING_MERT_PRESERVATION_WEIGHT \
-  MASTERING_MERT_REFERENCE_WEIGHT \
-  HF_HOME \
-  HF_HUB_CACHE \
-  TRANSFORMERS_CACHE)"
+env_prefix="$(build_env_prefix "${MASTERING_ENV_KEYS[@]}")"
 env_prefix="$(append_reference_dir_env "$env_prefix")"
 
 local_models_args=()
@@ -72,6 +48,13 @@ case "${MASTERING_APOLLO_ONLY:-}" in
     ;;
 esac
 
+openai_args=()
+case "${MASTERING_OPENAI_JUDGE:-}" in
+  1|true|TRUE|yes|YES|on|ON)
+    openai_args=(--ai)
+    ;;
+esac
+
 run_master_with_env_prefix "$env_prefix" ai-render \
   --input "$(win_path "$input_path")" \
   --out-dir "$(win_path "$out_dir")" \
@@ -79,6 +62,7 @@ run_master_with_env_prefix "$env_prefix" ai-render \
   "--target-lufs=$target_lufs" \
   "--jobs=$jobs" \
   --style "$style" \
+  "${openai_args[@]}" \
   "${local_models_args[@]}" \
   "${apollo_args[@]}" \
   --json-out "$(win_path "$out_dir/ai-mastering-report.json")"

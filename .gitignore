@@ -5,8 +5,11 @@
 # Python runtime artifacts
 __pycache__/
 *.py[cod]
+.mypy_cache/
+.pytest_cache/
 
 # Generated renders and reports
+*.log
 *.wav
 *.aif
 *.aiff
