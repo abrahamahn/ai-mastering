@@ -146,6 +146,103 @@ def cmd_prefer(run_id: int, candidate_name: str, tags: list[str]) -> None:
         print(f"[prefer] Tags: {', '.join(tags)}")
 
 
+def _normalized_path(path: Path) -> str:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path.absolute()
+    text = str(resolved)
+    return text.lower() if os.name == "nt" else text
+
+
+def cmd_pick(
+    run_id: int,
+    candidate_name: str,
+    output_path: str | None,
+    clean: bool,
+    tags: list[str],
+) -> None:
+    """Record a preference, copy the picked master, and optionally clean intermediates."""
+    import shutil
+
+    from .history.db import HistoryDB
+
+    db = HistoryDB()
+    run = db.get_run(run_id)
+    if not run:
+        db.close()
+        print(f"[pick] No run found with id={run_id}", file=sys.stderr)
+        sys.exit(1)
+
+    candidates = run.get("candidates", [])
+    selected = next((c for c in candidates if c.get("name") == candidate_name), None)
+    if not selected:
+        db.close()
+        names = ", ".join(str(c.get("name")) for c in candidates if c.get("name"))
+        print(f"[pick] Candidate not found: {candidate_name}", file=sys.stderr)
+        print(f"[pick] Available candidates: {names}", file=sys.stderr)
+        sys.exit(1)
+
+    selected_wav = selected.get("wav_path")
+    if not selected_wav:
+        db.close()
+        print(f"[pick] Candidate has no WAV path: {candidate_name}", file=sys.stderr)
+        sys.exit(1)
+
+    selected_path = Path(selected_wav)
+    if not selected_path.exists():
+        db.close()
+        print(f"[pick] Candidate WAV not found: {selected_path}", file=sys.stderr)
+        sys.exit(1)
+
+    out_path = _cli_path(output_path) if output_path else None
+    if out_path:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(selected_path, out_path)
+        print(f"[pick] Copied selected master: {out_path}")
+
+    db.record_preference(run_id, candidate_name, tags or None)
+    db.close()
+    print(f"[pick] Recorded: run {run_id} winner={candidate_name}")
+
+    if not clean:
+        return
+
+    keep_paths = set()
+    if out_path:
+        keep_paths.add(_normalized_path(out_path))
+    else:
+        keep_paths.add(_normalized_path(selected_path))
+
+    candidate_dirs: set[Path] = set()
+    removed = 0
+    for candidate in candidates:
+        wav_path = candidate.get("wav_path")
+        if not wav_path:
+            continue
+        path = Path(wav_path)
+        candidate_dirs.add(path.parent)
+        if candidate.get("name") == "original":
+            keep_paths.add(_normalized_path(path))
+            continue
+        if _normalized_path(path) in keep_paths:
+            continue
+        if path.exists():
+            path.unlink()
+            removed += 1
+
+    basename = run.get("basename") or ""
+    for directory in candidate_dirs:
+        best_path = directory / f"{basename}_ai_best.wav"
+        if _normalized_path(best_path) in keep_paths:
+            continue
+        if best_path.exists():
+            best_path.unlink()
+            removed += 1
+
+    print(f"[pick] Cleaned {removed} intermediate WAV file(s); original reference preserved.")
+
+
 def cmd_history(limit: int) -> None:
     from .history.db import HistoryDB
     db = HistoryDB()
@@ -208,6 +305,7 @@ def main() -> None:
         'check',
         'discover',
         'models-check',
+        'pick',
         'prefer',
         'history',
         'train-ranker',
@@ -302,6 +400,16 @@ def main() -> None:
     prefer_parser.add_argument('candidate', help='Candidate name, e.g. ai_punch_warm')
     prefer_parser.add_argument('--tags', default='', help='Comma-separated reason tags, e.g. better_low_end,release_ready')
 
+    pick_parser = subcommands.add_parser(
+        'pick',
+        help='Record a preferred candidate, copy it to an output WAV, and optionally clean intermediates',
+    )
+    pick_parser.add_argument('run_id', type=int, help='Run ID from history DB')
+    pick_parser.add_argument('candidate', help='Candidate name from ai-mastering-report.json')
+    pick_parser.add_argument('--out', help='Final WAV path to receive the selected candidate')
+    pick_parser.add_argument('--clean', action='store_true', help='Delete non-selected candidate WAVs after copying')
+    pick_parser.add_argument('--tags', default='', help='Comma-separated reason tags, e.g. better_low_end,release_ready')
+
     history_parser = subcommands.add_parser('history', help='Show recent mastering runs and preferences')
     history_parser.add_argument('--last', type=int, default=10, metavar='N', help='Number of recent runs to show')
 
@@ -353,6 +461,11 @@ def main() -> None:
     if args.command == 'prefer':
         tags = [t.strip() for t in args.tags.split(',') if t.strip()] if args.tags else []
         cmd_prefer(args.run_id, args.candidate, tags)
+        return
+
+    if args.command == 'pick':
+        tags = [t.strip() for t in args.tags.split(',') if t.strip()] if args.tags else []
+        cmd_pick(args.run_id, args.candidate, args.out, args.clean, tags)
         return
 
     if args.command == 'history':

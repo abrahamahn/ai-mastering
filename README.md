@@ -59,7 +59,7 @@ Defaults:
 
 1. `./master.sh` masters the newest source WAV in `/mnt/c/Production/music/Submission`.
 2. Output goes to `<input folder>/masters/<basename>_<timestamp>` to avoid overwriting files that a DAW or Windows may be holding open.
-3. `MASTERING_JOBS=2` renders initial candidates in parallel by default through the wrapper.
+3. The default catalog is now six bolder creative candidates instead of the older conservative 16-candidate set.
 4. `MASTERING_LOCAL_MODELS=0` disables optional CLAP/MERT scoring when you want faster offline tests.
 
 Example fast run:
@@ -86,7 +86,9 @@ Use `--fast` if you want to skip optional CLAP/MERT scoring while testing:
 ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
 ```
 
-Apollo is not bundled and is not enabled by default. When enabled, the app renders the normal mastering candidates plus `apollo_restored`, `apollo_musical_restore`, `apollo_ai_artifact_repair`, and `apollo_dynamic_punch_image` so restoration is auditioned against the original-source chain instead of silently replacing it.
+Apollo is not bundled and is not enabled by default. When enabled, the app renders the normal mastering candidates plus `apollo_restored` and Apollo-fed variants of the main repair/color candidates so restoration is auditioned against the original-source chain instead of silently replacing it.
+
+Set `MASTERING_LEGACY_CANDIDATES=1` if you want to run the older, larger conservative candidate catalog.
 
 ## 4. Methods
 
@@ -108,6 +110,19 @@ The system computes low-level audio descriptors before and after processing:
 12. An artifact index that combines brittle high-frequency imbalance, side-high excess, high-band crest, and negative high-band correlation.
 
 These metrics are used as release guards. A candidate is penalized or rejected if it loses too much presence, narrows the stereo image, over-raises sub energy, clips true peak, or compresses the source excessively.
+
+### 4.2 Creative Remaster Candidates
+
+The default `ai-render` catalog intentionally uses fewer, more different candidates:
+
+1. `transparent_repair`: conservative deglaze and source-preserving cleanup.
+2. `creative_analog`: audible tape, Inflator, M/S warmth/presence, and parallel soft clipping.
+3. `wide_open_color`: vocal-forward midrange with wider presence imaging and side-high smoothing.
+4. `ai_deglaze`: stronger side-high and phasey-fizz control for brittle AI artifacts.
+5. `punch_density`: stronger low-end focus, density, and a Weiss finish.
+6. `dynamic_open`: lower-density, more dynamic, open candidate with lighter limiting.
+
+Creative candidates disable source-match rollback and use relaxed release guards so the report can surface audible color options instead of forcing every render back toward the original.
 
 ### 4.2 Corrective EQ
 

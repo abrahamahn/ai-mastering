@@ -125,7 +125,7 @@ find_newest_wav() {
     if [[ "$name" =~ _ai_best\.wav$|_original\.wav$|_mastered\.wav$ ]]; then
       continue
     fi
-    if [[ "$name" =~ _(classic_chain|streaming_loud_open|streaming_polish_plus|preserve_open|bright_open_edm|punch_warm|punch_warm_dynamic|controlled_shimmer|deharsh_gullfoss|analog_warm_punch|musical_restore|ai_artifact_repair|dynamic_punch_image|inflator_weiss_density|emotional_vocal|tight_competitive)\.wav$ ]]; then
+    if [[ "$name" =~ _(transparent_repair|creative_analog|wide_open_color|ai_deglaze|punch_density|dynamic_open|classic_chain|streaming_loud_open|streaming_polish_plus|preserve_open|bright_open_edm|punch_warm|punch_warm_dynamic|controlled_shimmer|deharsh_gullfoss|analog_warm_punch|musical_restore|ai_artifact_repair|dynamic_punch_image|inflator_weiss_density|emotional_vocal|tight_competitive)\.wav$ ]]; then
       continue
     fi
     found="$f"

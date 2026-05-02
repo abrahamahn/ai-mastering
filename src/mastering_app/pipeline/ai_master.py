@@ -504,6 +504,29 @@ def _score_candidate(source_metrics: dict[str, float], candidate_metrics: dict[s
     return float(round(score, 3)), notes
 
 
+def _creative_audibility_bonus(source_metrics: dict[str, float], candidate_metrics: dict[str, float]) -> tuple[float, list[str]]:
+    """Reward creative candidates for making audible, controlled moves."""
+    notes: list[str] = []
+    low_mid = abs(_normalized_band_delta(source_metrics, candidate_metrics, "low_mid_db"))
+    vocal = abs(_normalized_band_delta(source_metrics, candidate_metrics, "vocal_presence_db"))
+    width = abs(candidate_metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"])
+    artifact_drop = max(0.0, source_metrics.get("artifact_index", 0.0) - candidate_metrics.get("artifact_index", 0.0))
+    punch = max(0.0, candidate_metrics["punch_to_mud_db"] - source_metrics["punch_to_mud_db"])
+    audible_move = low_mid + vocal + width + artifact_drop + punch
+
+    bonus = min(14.0, max(0.0, audible_move - 1.2) * 2.2)
+    penalty = 0.0
+    if candidate_metrics["loud_window_crest_db"] < 4.8:
+        penalty += min(8.0, (4.8 - candidate_metrics["loud_window_crest_db"]) * 4.0)
+    if candidate_metrics["true_peak_dbfs"] > -0.6:
+        penalty += 8.0
+    if bonus >= 1.0:
+        notes.append(f"creative audibility bonus {bonus:+.1f}")
+    if penalty >= 1.0:
+        notes.append(f"creative safety penalty {-penalty:+.1f}")
+    return float(bonus - penalty), notes
+
+
 def _render_candidate(
     source_audio: np.ndarray,
     sr: int,
@@ -545,6 +568,11 @@ def _render_candidate(
     sf.write(str(output_path), mastered.T, sr, subtype="PCM_24")
     metrics = _metrics(mastered, sr)
     score, score_notes = _score_candidate(source_metrics, metrics, effective_target)
+    if settings.creative_mode:
+        creative_bonus, creative_notes = _creative_audibility_bonus(source_metrics, metrics)
+        score = float(round(score + creative_bonus, 3))
+        score_notes.extend(creative_notes)
+        score_notes.append("creative mode: source-match rollback disabled and release guards relaxed")
 
     warnings = list(qc.get("warnings", []))
     if target_note:
@@ -663,9 +691,10 @@ def _restored_source_candidate(
 
 def _restored_candidate_settings(settings_catalog: list[MasteringSettings], engine: str) -> list[MasteringSettings]:
     selected = {
-        "musical_restore",
-        "ai_artifact_repair",
-        "dynamic_punch_image",
+        "transparent_repair",
+        "creative_analog",
+        "ai_deglaze",
+        "dynamic_open",
     }
     restored: list[MasteringSettings] = []
     for settings in settings_catalog:
@@ -746,21 +775,30 @@ def _candidate_passes_release_guards(source_metrics: dict[str, float], candidate
     if candidate["name"] == "original":
         return True
     metrics = candidate["metrics"]
-    if metrics["presence_db"] - source_metrics["presence_db"] < -1.6:
+    settings = candidate.get("settings") or {}
+    creative = bool(settings.get("creative_mode"))
+    presence_floor = -2.8 if creative else -1.6
+    side_floor = -2.2 if creative else -1.6
+    corr_ceiling = 0.18 if creative else 0.12
+    sub_ceiling = 3.5 if creative else 2.4
+    hf_ceiling = 0.06 if creative else 0.03
+    artifact_ceiling = 2.8 if creative else 1.5
+    high_corr_floor = -0.32 if creative else -0.25
+    if metrics["presence_db"] - source_metrics["presence_db"] < presence_floor:
         return False
-    if metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"] < -1.6:
+    if metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"] < side_floor:
         return False
-    if metrics["stereo_correlation"] - source_metrics["stereo_correlation"] > 0.12:
+    if metrics["stereo_correlation"] - source_metrics["stereo_correlation"] > corr_ceiling:
         return False
-    if metrics["sub_db"] - source_metrics["sub_db"] > 2.4:
+    if metrics["sub_db"] - source_metrics["sub_db"] > sub_ceiling:
         return False
-    if metrics["hf_ratio"] - source_metrics["hf_ratio"] > 0.03:
+    if metrics["hf_ratio"] - source_metrics["hf_ratio"] > hf_ceiling:
         return False
-    if metrics.get("artifact_index", 0.0) - source_metrics.get("artifact_index", 0.0) > 1.5:
+    if metrics.get("artifact_index", 0.0) - source_metrics.get("artifact_index", 0.0) > artifact_ceiling:
         return False
-    if metrics.get("high_band_correlation", 1.0) < -0.25:
+    if metrics.get("high_band_correlation", 1.0) < high_corr_floor:
         return False
-    if _source_is_harsh(source_metrics) and metrics["air_db"] - source_metrics["air_db"] > -0.2:
+    if not creative and _source_is_harsh(source_metrics) and metrics["air_db"] - source_metrics["air_db"] > -0.2:
         return False
     if (
         source_metrics["loud_window_crest_db"] >= 6.0
@@ -880,12 +918,15 @@ def _call_openai_judge(
                 "ozone_imager_band_3_width_percent, ozone_imager_band_4_width_percent, "
                 "ozone_imager_width_scale, ozone_imager_stereoizer_delay_ms, "
                 "weiss_amount, weiss_limiter_gain_db, weiss_out_trim_dbfs, weiss_parallel_mix, "
+                "ms_mid_warmth_db, ms_mid_presence_db, ms_side_presence_db, ms_side_hf_shelf_db, "
+                "soft_clip_drive_db, soft_clip_mix, soft_clip_output_trim_db, "
                 "hf_guard_ratio_threshold, hf_guard_air_to_presence_db, hf_guard_frequency_hz, "
                 "hf_guard_max_reduction_db, loud_section_seconds, loud_section_min_crest_db, "
                 "loud_section_max_crest_loss_db. "
                 "It may also include these booleans: gullfoss_enabled, bax_enabled, bx_digital_enabled, "
                 "bx_mono_maker_enabled, low_end_focus_enabled, inflator_enabled, ozone_imager_enabled, "
-                "ozone_imager_stereoizer_enabled, hf_guard_enabled, loud_section_guard_enabled. "
+                "ozone_imager_stereoizer_enabled, hf_guard_enabled, loud_section_guard_enabled, "
+                "creative_mode, ms_tone_enabled, soft_clip_enabled. "
                 "It may include these strings only with valid values: final_limiter='ozone9' or 'weiss_mm1', "
                 "low_end_focus_mode='Punchy' or 'Smooth', weiss_style='Transparent', 'Loud', 'Punch', "
                 "'Wide', or 'De-ess'."

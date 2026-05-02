@@ -488,6 +488,17 @@ def _chain_stages(settings: dict[str, Any] | None, candidate: dict[str, Any] | N
             "kind": "optional",
             "details": _params(settings, ["bx_stereo_width", "bx_mono_maker_enabled", "bx_mono_maker_hz"]),
         })
+    if settings.get("ms_tone_enabled"):
+        stages.append({
+            "name": "Creative M/S Tone",
+            "kind": "optional",
+            "details": _params(settings, [
+                "ms_mid_warmth_db",
+                "ms_mid_presence_db",
+                "ms_side_presence_db",
+                "ms_side_hf_shelf_db",
+            ]),
+        })
     stages.extend([
         {"name": "soothe2 pass 1", "kind": "core", "details": _params(settings, ["soothe_depth_scale", "soothe1_mix"])},
         {"name": "soothe2 pass 2", "kind": "core", "details": _params(settings, ["soothe2_depth_scale", "soothe2_mix"])},
@@ -508,6 +519,12 @@ def _chain_stages(settings: dict[str, Any] | None, candidate: dict[str, Any] | N
             "name": "Oxford Inflator",
             "kind": "optional",
             "details": _params(settings, ["inflator_effect", "inflator_curve", "inflator_output_gain"]),
+        })
+    if settings.get("soft_clip_enabled"):
+        stages.append({
+            "name": "Parallel Soft Clip",
+            "kind": "optional",
+            "details": _params(settings, ["soft_clip_drive_db", "soft_clip_mix", "soft_clip_output_trim_db"]),
         })
     if settings.get("hf_guard_enabled"):
         stages.append({
@@ -580,6 +597,8 @@ def _active_optional_modules(settings: dict[str, Any] | None, candidate: dict[st
         ("bx_digital_enabled", "bx_digital"),
         ("low_end_focus_enabled", "Low End Focus"),
         ("inflator_enabled", "Inflator"),
+        ("ms_tone_enabled", "M/S Tone"),
+        ("soft_clip_enabled", "Soft Clip"),
         ("ozone_imager_enabled", "Ozone Imager"),
     ]
     for key, label in mapping:

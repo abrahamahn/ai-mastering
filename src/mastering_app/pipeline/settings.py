@@ -1,6 +1,7 @@
 """Bounded mastering settings used by deterministic and AI-assisted renders."""
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
@@ -87,6 +88,16 @@ class MasteringSettings:
     source_match_presence_max_db: float = 1.2
     source_match_sub_trim_max_db: float = 1.0
     source_match_side_max_db: float = 1.8
+    creative_mode: bool = False
+    ms_tone_enabled: bool = False
+    ms_mid_warmth_db: float = 0.0
+    ms_mid_presence_db: float = 0.0
+    ms_side_presence_db: float = 0.0
+    ms_side_hf_shelf_db: float = 0.0
+    soft_clip_enabled: bool = False
+    soft_clip_drive_db: float = 0.0
+    soft_clip_mix: float = 0.0
+    soft_clip_output_trim_db: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -152,6 +163,13 @@ SETTING_BOUNDS: dict[str, tuple[float, float]] = {
     "source_match_presence_max_db": (0.0, 2.0),
     "source_match_sub_trim_max_db": (0.0, 1.8),
     "source_match_side_max_db": (0.0, 2.5),
+    "ms_mid_warmth_db": (-2.0, 2.0),
+    "ms_mid_presence_db": (-2.0, 2.0),
+    "ms_side_presence_db": (-2.0, 2.0),
+    "ms_side_hf_shelf_db": (-4.0, 2.0),
+    "soft_clip_drive_db": (0.0, 8.0),
+    "soft_clip_mix": (0.0, 100.0),
+    "soft_clip_output_trim_db": (-4.0, 0.0),
 }
 
 BOOLEAN_SETTINGS = {
@@ -171,6 +189,9 @@ BOOLEAN_SETTINGS = {
     "loud_section_guard_enabled",
     "hf_guard_enabled",
     "source_match_enabled",
+    "creative_mode",
+    "ms_tone_enabled",
+    "soft_clip_enabled",
 }
 
 STRING_SETTINGS = {
@@ -221,9 +242,258 @@ def bounded_settings(base: MasteringSettings, name: str, description: str, overr
     return MasteringSettings(**values)
 
 
+def _use_legacy_candidates() -> bool:
+    return os.environ.get("MASTERING_LEGACY_CANDIDATES", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _creative_candidate_settings(base: MasteringSettings) -> list[MasteringSettings]:
+    """Fewer, bolder candidates designed for audible tone/dynamics/imaging choices."""
+    return [
+        bounded_settings(
+            base,
+            "transparent_repair",
+            "transparent repair: reduce AI glass/fizz while preserving the original tonal center",
+            {
+                "internal_chain_lufs": -14.8,
+                "soothe_depth_scale": 0.92,
+                "soothe1_mix": 32.0,
+                "soothe2_depth_scale": 0.10,
+                "soothe2_mix": 18.0,
+                "multipass_macro_cap": 15.0,
+                "gullfoss_recover": 5.0,
+                "gullfoss_tame": 14.0,
+                "gullfoss_brighten": -0.6,
+                "tape_color_scale": 0.95,
+                "hf_guard_max_reduction_db": 1.4,
+                "source_match_presence_max_db": 1.8,
+                "source_match_side_max_db": 2.3,
+            },
+        ),
+        bounded_settings(
+            base,
+            "creative_analog",
+            "creative analog remaster: audible tape/Inflator density, low-mid color, and softened digital top",
+            {
+                "creative_mode": True,
+                "source_match_enabled": False,
+                "internal_chain_lufs": -13.9,
+                "soothe_depth_scale": 0.72,
+                "soothe1_mix": 24.0,
+                "soothe2_depth_scale": 0.05,
+                "soothe2_mix": 10.0,
+                "multipass_macro_cap": 9.0,
+                "alpha_ratio": 1.12,
+                "alpha_threshold_offset": 0.7,
+                "tape_color_scale": 1.4,
+                "tape_color_offset": 0.8,
+                "tape_color_min": 2.6,
+                "tape_color_max": 5.0,
+                "gullfoss_recover": 9.0,
+                "gullfoss_tame": 8.0,
+                "gullfoss_brighten": 0.2,
+                "bax_enabled": True,
+                "bax_low_shelf_db": 0.75,
+                "bax_high_shelf_db": 0.05,
+                "low_end_focus_enabled": True,
+                "low_end_focus_contrast": 16.0,
+                "low_end_focus_gain_db": 0.35,
+                "inflator_enabled": True,
+                "inflator_effect": 22.0,
+                "inflator_curve": 8.0,
+                "inflator_output_gain": -1.6,
+                "soft_clip_enabled": True,
+                "soft_clip_drive_db": 4.5,
+                "soft_clip_mix": 32.0,
+                "soft_clip_output_trim_db": -1.2,
+                "ms_tone_enabled": True,
+                "ms_mid_warmth_db": 0.8,
+                "ms_mid_presence_db": 0.45,
+                "ms_side_hf_shelf_db": -1.1,
+                "bx_digital_enabled": True,
+                "bx_stereo_width": 103.0,
+                "bx_mono_maker_enabled": True,
+                "bx_mono_maker_hz": 95.0,
+                "ozone_imager_band_2_width_percent": 5.0,
+                "ozone_imager_band_3_width_percent": 8.0,
+                "ozone_imager_band_4_width_percent": 6.0,
+                "hf_guard_max_reduction_db": 1.1,
+                "loud_section_min_crest_db": 6.1,
+                "loud_section_max_crest_loss_db": 1.1,
+            },
+        ),
+        bounded_settings(
+            base,
+            "wide_open_color",
+            "wide open color: vocal-forward mid, wider presence image, side-high deglaze",
+            {
+                "creative_mode": True,
+                "source_match_enabled": False,
+                "internal_chain_lufs": -14.2,
+                "soothe_depth_scale": 0.62,
+                "soothe1_mix": 18.0,
+                "soothe2_depth_scale": 0.03,
+                "soothe2_mix": 8.0,
+                "multipass_macro_cap": 5.0,
+                "tape_color_scale": 1.0,
+                "tape_color_offset": 0.35,
+                "gullfoss_recover": 11.0,
+                "gullfoss_tame": 5.0,
+                "gullfoss_brighten": 1.2,
+                "bax_enabled": True,
+                "bax_high_shelf_db": 0.45,
+                "ms_tone_enabled": True,
+                "ms_mid_presence_db": 0.9,
+                "ms_side_presence_db": 0.6,
+                "ms_side_hf_shelf_db": -0.9,
+                "bx_digital_enabled": True,
+                "bx_stereo_width": 108.0,
+                "bx_mono_maker_enabled": True,
+                "bx_mono_maker_hz": 85.0,
+                "ozone_imager_band_2_width_percent": 12.0,
+                "ozone_imager_band_3_width_percent": 22.0,
+                "ozone_imager_band_4_width_percent": 14.0,
+                "ozone_imager_width_scale": 1.2,
+                "inflator_enabled": True,
+                "inflator_effect": 10.0,
+                "inflator_curve": 1.0,
+                "inflator_output_gain": -0.8,
+                "hf_guard_air_to_presence_db": 0.6,
+                "hf_guard_max_reduction_db": 0.9,
+                "loud_section_min_crest_db": 6.5,
+                "loud_section_max_crest_loss_db": 0.75,
+            },
+        ),
+        bounded_settings(
+            base,
+            "ai_deglaze",
+            "AI deglaze: strong side-high smoothing and phase stabilization without low-mid hype",
+            {
+                "creative_mode": True,
+                "source_match_enabled": False,
+                "internal_chain_lufs": -15.2,
+                "soothe_depth_scale": 1.28,
+                "soothe1_mix": 52.0,
+                "soothe2_depth_scale": 0.22,
+                "soothe2_mix": 30.0,
+                "multipass_macro_cap": 24.0,
+                "alpha_ratio": 1.1,
+                "alpha_threshold_offset": 1.2,
+                "tape_color_scale": 1.2,
+                "tape_color_offset": 0.35,
+                "gullfoss_recover": 3.0,
+                "gullfoss_tame": 25.0,
+                "gullfoss_brighten": -2.2,
+                "gullfoss_boost_db": -0.25,
+                "ms_tone_enabled": True,
+                "ms_mid_presence_db": 0.3,
+                "ms_side_presence_db": -0.4,
+                "ms_side_hf_shelf_db": -2.4,
+                "bx_digital_enabled": True,
+                "bx_stereo_width": 98.0,
+                "bx_mono_maker_enabled": True,
+                "bx_mono_maker_hz": 120.0,
+                "ozone_imager_band_2_width_percent": -2.0,
+                "ozone_imager_band_3_width_percent": -6.0,
+                "ozone_imager_band_4_width_percent": -10.0,
+                "hf_guard_frequency_hz": 7000.0,
+                "hf_guard_air_to_presence_db": -0.2,
+                "hf_guard_max_reduction_db": 2.5,
+                "loud_section_min_crest_db": 7.0,
+                "loud_section_max_crest_loss_db": 0.55,
+            },
+        ),
+        bounded_settings(
+            base,
+            "punch_density",
+            "punch density: stronger low-end focus, parallel clip density, and energetic Weiss finish",
+            {
+                "creative_mode": True,
+                "source_match_enabled": False,
+                "internal_chain_lufs": -13.4,
+                "soothe_depth_scale": 0.76,
+                "soothe1_mix": 22.0,
+                "soothe2_depth_scale": 0.05,
+                "soothe2_mix": 10.0,
+                "multipass_macro_cap": 8.0,
+                "alpha_ratio": 1.16,
+                "alpha_threshold_offset": -0.3,
+                "tape_color_scale": 1.25,
+                "tape_color_offset": 0.55,
+                "gullfoss_recover": 7.0,
+                "gullfoss_tame": 7.0,
+                "bax_enabled": True,
+                "bax_low_shelf_db": 0.95,
+                "low_end_focus_enabled": True,
+                "low_end_focus_contrast": 28.0,
+                "low_end_focus_gain_db": 0.55,
+                "inflator_enabled": True,
+                "inflator_effect": 26.0,
+                "inflator_curve": 6.0,
+                "inflator_output_gain": -1.8,
+                "soft_clip_enabled": True,
+                "soft_clip_drive_db": 5.5,
+                "soft_clip_mix": 45.0,
+                "soft_clip_output_trim_db": -1.6,
+                "ms_tone_enabled": True,
+                "ms_mid_warmth_db": 0.65,
+                "ms_side_hf_shelf_db": -1.0,
+                "bx_digital_enabled": True,
+                "bx_stereo_width": 102.0,
+                "bx_mono_maker_enabled": True,
+                "bx_mono_maker_hz": 110.0,
+                "final_limiter": "weiss_mm1",
+                "weiss_amount": 34.0,
+                "weiss_style": "Punch",
+                "weiss_out_trim_dbfs": -1.2,
+                "loud_section_min_crest_db": 5.7,
+                "loud_section_max_crest_loss_db": 1.35,
+            },
+        ),
+        bounded_settings(
+            base,
+            "dynamic_open",
+            "dynamic open: lowest density, preserved chorus crest, vocal presence, and gentle width",
+            {
+                "creative_mode": True,
+                "source_match_enabled": False,
+                "internal_chain_lufs": -15.6,
+                "soothe_depth_scale": 0.50,
+                "soothe1_mix": 14.0,
+                "soothe2_depth_scale": 0.02,
+                "soothe2_mix": 6.0,
+                "multipass_macro_cap": 3.0,
+                "alpha_ratio": 1.1,
+                "alpha_threshold_offset": 1.8,
+                "tape_color_scale": 0.82,
+                "tape_color_offset": 0.15,
+                "gullfoss_recover": 8.0,
+                "gullfoss_tame": 4.0,
+                "gullfoss_brighten": 0.7,
+                "ms_tone_enabled": True,
+                "ms_mid_presence_db": 0.55,
+                "ms_side_presence_db": 0.35,
+                "ms_side_hf_shelf_db": -0.7,
+                "bx_digital_enabled": True,
+                "bx_stereo_width": 105.0,
+                "ozone_imager_band_2_width_percent": 6.0,
+                "ozone_imager_band_3_width_percent": 10.0,
+                "ozone_imager_band_4_width_percent": 6.0,
+                "inflator_enabled": False,
+                "soft_clip_enabled": False,
+                "ozone_threshold": -0.4,
+                "hf_guard_max_reduction_db": 0.7,
+                "loud_section_min_crest_db": 7.4,
+                "loud_section_max_crest_loss_db": 0.35,
+            },
+        ),
+    ]
+
+
 def candidate_settings(style: str) -> list[MasteringSettings]:
     style_note = style.strip() or "modern pop / EDM"
     base = replace(DEFAULT_SETTINGS, description=f"source-preserving polish for {style_note}")
+    if not _use_legacy_candidates():
+        return _creative_candidate_settings(base)
     return [
         bounded_settings(
             base,

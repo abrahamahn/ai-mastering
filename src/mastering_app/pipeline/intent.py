@@ -207,6 +207,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("musical_restore", 4.0)
         bias("dynamic_punch_image", 3.0)
         bias("preserve_open", 2.0)
+        bias("wide_open_color", 8.0)
+        bias("dynamic_open", 5.0)
         notes.append("bright/open comment: favor open EDM candidate and wider high bands")
 
     if "streaming" in tags:
@@ -227,6 +229,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("streaming_polish_plus", 8.0)
         bias("punch_warm_dynamic", 3.0)
         bias("inflator_weiss_density", -2.0)
+        bias("transparent_repair", 3.0)
+        bias("dynamic_open", 4.0)
+        bias("punch_density", -3.0)
         notes.append("streaming comment: optimize normalized playback loudness, headroom, and chorus crest")
 
     if "dark_muffled" in tags:
@@ -248,6 +253,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("bright_open_edm", 7.0)
         bias("deharsh_gullfoss", -5.0)
         bias("controlled_shimmer", -3.0)
+        bias("wide_open_color", 9.0)
+        bias("dynamic_open", 5.0)
+        bias("ai_deglaze", -4.0)
         notes.append("muffled/dark comment: reduce de-harshing pressure and restore presence")
 
     if "deharsh" in tags:
@@ -293,6 +301,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("ai_artifact_repair", 8.0)
         bias("deharsh_gullfoss", 7.0)
         bias("controlled_shimmer", 5.0)
+        bias("ai_deglaze", 10.0)
+        bias("transparent_repair", 6.0)
+        bias("creative_analog", 4.0)
         notes.append("harsh high-end comment: bias tape-led analog warmth alongside Gullfoss/Multipass de-harshing")
 
     if "wide_stereo" in tags:
@@ -308,6 +319,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("dynamic_punch_image", 5.0)
         bias("musical_restore", 4.0)
         bias("preserve_open", 3.0)
+        bias("wide_open_color", 9.0)
+        bias("dynamic_open", 5.0)
         notes.append("wide/stereo comment: enable width-preserving stages and bias open candidates")
 
     if "punch_warm" in tags:
@@ -353,6 +366,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("analog_warm_punch", 8.0)
         bias("punch_warm", 6.0)
         bias("punch_warm_dynamic", 5.0)
+        bias("creative_analog", 11.0)
+        bias("punch_density", 8.0)
         notes.append("analog/warm comment: favor tape-led harmonic saturation candidate and low-mid warmth")
 
     if "dynamic_guard" in tags:
@@ -385,6 +400,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("preserve_open", 4.0)
         bias("original", 2.0)
         bias("inflator_weiss_density", -6.0)
+        bias("dynamic_open", 10.0)
+        bias("transparent_repair", 4.0)
+        bias("punch_density", -5.0)
         notes.append("less-squashed comment: stricter loud-section crest guard and lower density bias")
 
     if "clean_preserve" in tags:
@@ -403,6 +421,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("original", 5.0)
         bias("preserve_open", 7.0)
         bias("inflator_weiss_density", -5.0)
+        bias("transparent_repair", 8.0)
+        bias("dynamic_open", 4.0)
+        bias("punch_density", -6.0)
         notes.append("clean/preserve comment: lower processing depth and favor original/preserve")
 
     if "loud_dense" in tags and "dynamic_guard" not in tags:
@@ -420,6 +441,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("musical_restore", 5.0)
         bias("inflator_weiss_density", 3.0)
         bias("bright_open_edm", 3.0)
+        bias("punch_density", 10.0)
+        bias("creative_analog", 6.0)
         notes.append("loud/dense comment: favor perceived density without pushing raw LUFS")
 
     if "vocal_forward" in tags:
@@ -436,6 +459,9 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("musical_restore", 4.0)
         bias("dynamic_punch_image", 2.0)
         bias("preserve_open", 3.0)
+        bias("wide_open_color", 6.0)
+        bias("dynamic_open", 5.0)
+        bias("creative_analog", 3.0)
         notes.append("vocal-forward comment: preserve/restore presence and air")
 
     if not tags:
