@@ -71,11 +71,19 @@ MASTERING_LOCAL_MODELS=0 MASTERING_JOBS=2 ./master.sh /mnt/c/Production/music/Su
 Optional Apollo restoration branch:
 
 ```bash
-MASTERING_APOLLO=1 \
-MASTERING_APOLLO_REPO=/mnt/c/path/to/Apollo \
-MASTERING_LOCAL_MODELS=0 \
-MASTERING_JOBS=2 \
-./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
+./master.sh --apollo /mnt/c/Production/music/Submission/abe002_mulholland.wav
+```
+
+Set the Apollo checkout once in `.env.local`:
+
+```bash
+MASTERING_APOLLO_REPO=/mnt/c/path/to/Apollo
+```
+
+Use `--fast` if you want to skip optional CLAP/MERT scoring while testing:
+
+```bash
+./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
 ```
 
 Apollo is not bundled and is not enabled by default. When enabled, the app renders the normal mastering candidates plus `apollo_restored`, `apollo_musical_restore`, `apollo_ai_artifact_repair`, and `apollo_dynamic_punch_image` so restoration is auditioned against the original-source chain instead of silently replacing it.
@@ -271,8 +279,7 @@ Render with source-aware AI/local-model selection:
 Render with an external Apollo restoration candidate:
 
 ```bash
-MASTERING_APOLLO=1 MASTERING_APOLLO_REPO=/mnt/c/path/to/Apollo \
-./scripts/windows/ai-render.sh /mnt/c/path/to/song.wav /mnt/c/path/to/output ai-test -14 "tone-first restoration; preserve vocal presence and width"
+./master.sh --apollo /mnt/c/path/to/song.wav
 ```
 
 Open the generated `ai-mastering-report.html` in the output directory to inspect candidate audio, chain stages, active optional modules, score notes, and metric deltas against the source.

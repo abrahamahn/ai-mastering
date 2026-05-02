@@ -6,6 +6,7 @@
 #   ./master.sh song.wav
 #   ./master.sh /mnt/c/Production/music/Submission/song.wav
 #   ./master.sh /mnt/c/Production/music/Submission
+#   ./master.sh --apollo /mnt/c/Production/music/Submission/song.wav
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,6 +25,14 @@ Usage:
   ./master.sh <input-wav>
   ./master.sh <folder>
   ./master.sh <input-wav> <out-dir> [basename]
+  ./master.sh --apollo <input-wav>
+
+Options:
+  --apollo      enable Apollo restoration candidates for this run
+  --no-apollo   disable Apollo even if MASTERING_APOLLO=1 is set
+  --fast        disable optional CLAP/MERT local model scoring for this run
+  --jobs N      parallel candidate render jobs
+  --target N    target LUFS, default from MASTERING_PRIMARY_LUFS or -14
 
 Defaults:
   no args       newest source WAV in /mnt/c/Production/music/Submission
@@ -32,15 +41,72 @@ Defaults:
 
 Examples:
   ./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
+  ./master.sh --apollo /mnt/c/Production/music/Submission/abe002_mulholland.wav
+  ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
   MASTERING_LOCAL_MODELS=0 ./master.sh
   MASTERING_REFERENCE_DIR=/mnt/c/Production/music/references ./master.sh
-  MASTERING_APOLLO=1 MASTERING_APOLLO_REPO=/mnt/c/path/to/Apollo ./master.sh
 EOF
 }
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  usage
-  exit 0
+apollo_flag=""
+positionals=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --apollo)
+      apollo_flag="1"
+      shift
+      ;;
+    --no-apollo)
+      apollo_flag="0"
+      shift
+      ;;
+    --fast)
+      export MASTERING_LOCAL_MODELS=0
+      shift
+      ;;
+    --jobs)
+      if [ -z "${2:-}" ]; then
+        echo "[master] --jobs requires a value" >&2
+        exit 2
+      fi
+      export MASTERING_JOBS="$2"
+      shift 2
+      ;;
+    --target)
+      if [ -z "${2:-}" ]; then
+        echo "[master] --target requires a value" >&2
+        exit 2
+      fi
+      target_lufs="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      while [ "$#" -gt 0 ]; do
+        positionals+=("$1")
+        shift
+      done
+      ;;
+    -*)
+      echo "[master] Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      positionals+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${positionals[@]}"
+if [ "$apollo_flag" = "1" ]; then
+  export MASTERING_APOLLO=1
+elif [ "$apollo_flag" = "0" ]; then
+  export MASTERING_APOLLO=0
 fi
 
 find_newest_wav() {
