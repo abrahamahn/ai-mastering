@@ -1,5 +1,6 @@
 # Source-Aware AI Mastering for Suno-Generated Pop Music
 
+You can listen to the test demo results here: https://suno.com/playlist/3638a39f-56dc-489c-85e8-87c38df4666c
 ## Abstract
 
 This project implements a standalone, source-aware mastering system for Suno-generated songs. The core motivation is that AI-generated pop masters often arrive in a partially mastered state, but with recurring release-readiness problems: brittle digital high-end, limited loudness control, and inconsistent low-frequency punch. The system renders multiple bounded mastering candidates, evaluates each candidate against the original source, rejects candidates that become darker/narrower/overcompressed, and selects the best output using deterministic audio metrics plus local CLAP/MERT model scoring.
