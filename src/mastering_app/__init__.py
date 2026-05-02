@@ -1,0 +1,2 @@
+"""Standalone mastering application package."""
+

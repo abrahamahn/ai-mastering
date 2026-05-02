@@ -1,0 +1,28 @@
+# Local configuration
+.env.local
+.env.*.local
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+
+# Generated renders and reports
+*.wav
+*.aif
+*.aiff
+*.flac
+*.mp3
+*.m4a
+*.mp4
+*.mov
+*mastering-report.json
+*mastering-report.html
+outputs/
+runs/
+tmp/
+
+# Local model/cache state
+.cache/
+.hf/
+hf-cache/
+model-cache/
