@@ -204,6 +204,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("streaming_loud_open", 3.0)
         bias("streaming_polish_plus", 4.0)
         bias("bright_open_edm", 5.0)
+        bias("musical_restore", 4.0)
+        bias("dynamic_punch_image", 3.0)
         bias("preserve_open", 2.0)
         notes.append("bright/open comment: favor open EDM candidate and wider high bands")
 
@@ -275,6 +277,11 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "multipass_macro_cap": 16.0,
             "hf_guard_max_reduction_db": 1.0,
         })
+        candidate_set("ai_artifact_repair", {
+            "gullfoss_tame": 24.0,
+            "multipass_macro_cap": 23.0,
+            "hf_guard_max_reduction_db": 2.3,
+        })
         candidate_set("bright_open_edm", {
             "gullfoss_tame": 11.0,
             "gullfoss_brighten": 0.2,
@@ -282,6 +289,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("streaming_loud_open", 4.0)
         bias("streaming_polish_plus", 3.0)
         bias("analog_warm_punch", 6.0)
+        bias("musical_restore", 6.0)
+        bias("ai_artifact_repair", 8.0)
         bias("deharsh_gullfoss", 7.0)
         bias("controlled_shimmer", 5.0)
         notes.append("harsh high-end comment: bias tape-led analog warmth alongside Gullfoss/Multipass de-harshing")
@@ -296,6 +305,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "source_match_side_max_db": 2.5,
         })
         bias("bright_open_edm", 4.0)
+        bias("dynamic_punch_image", 5.0)
+        bias("musical_restore", 4.0)
         bias("preserve_open", 3.0)
         notes.append("wide/stereo comment: enable width-preserving stages and bias open candidates")
 
@@ -326,6 +337,19 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "gullfoss_recover": 8.0,
             "bax_high_shelf_db": 0.15,
         })
+        candidate_set("musical_restore", {
+            "tape_color_scale": 1.4,
+            "tape_color_offset": 0.6,
+            "low_end_focus_contrast": 14.0,
+            "bax_low_shelf_db": 0.45,
+        })
+        candidate_set("dynamic_punch_image", {
+            "low_end_focus_contrast": 20.0,
+            "low_end_focus_gain_db": 0.3,
+            "loud_section_min_crest_db": 7.3,
+        })
+        bias("musical_restore", 9.0)
+        bias("dynamic_punch_image", 7.0)
         bias("analog_warm_punch", 8.0)
         bias("punch_warm", 6.0)
         bias("punch_warm_dynamic", 5.0)
@@ -356,6 +380,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
             "weiss_style": "Transparent",
         })
         bias("punch_warm_dynamic", 9.0)
+        bias("dynamic_punch_image", 9.0)
+        bias("ai_artifact_repair", 4.0)
         bias("preserve_open", 4.0)
         bias("original", 2.0)
         bias("inflator_weiss_density", -6.0)
@@ -391,6 +417,7 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         })
         bias("streaming_loud_open", 4.0)
         bias("streaming_polish_plus", 9.0)
+        bias("musical_restore", 5.0)
         bias("inflator_weiss_density", 3.0)
         bias("bright_open_edm", 3.0)
         notes.append("loud/dense comment: favor perceived density without pushing raw LUFS")
@@ -406,6 +433,8 @@ def parse_comment_intent(comment: str) -> CommentIntent:
         bias("streaming_loud_open", 2.0)
         bias("streaming_polish_plus", 3.0)
         bias("bright_open_edm", 4.0)
+        bias("musical_restore", 4.0)
+        bias("dynamic_punch_image", 2.0)
         bias("preserve_open", 3.0)
         notes.append("vocal-forward comment: preserve/restore presence and air")
 

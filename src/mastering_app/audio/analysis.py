@@ -46,6 +46,58 @@ def measure_band_db(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -
     return float(10.0 * np.log10(np.mean(np.maximum(power[mask], 1e-18))))
 
 
+def _band_limited(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> np.ndarray:
+    high_hz = min(high_hz, sr * 0.45)
+    low_hz = max(20.0, min(low_hz, high_hz * 0.9))
+    if high_hz <= low_hz:
+        return audio
+    sos = scipy_signal.butter(
+        4,
+        [low_hz / (sr * 0.5), high_hz / (sr * 0.5)],
+        btype="bandpass",
+        output="sos",
+    )
+    return scipy_signal.sosfilt(sos, audio.astype(np.float64), axis=-1).astype(np.float32)
+
+
+def measure_band_side_to_mid_db(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
+    """Side/mid ratio in a specific band.
+
+    This catches phasey or narrowed masters better than global width metrics.
+    """
+    if audio.ndim < 2 or audio.shape[0] < 2:
+        return -120.0
+    band = _band_limited(audio, sr, low_hz, high_hz)
+    l, r = band[0], band[1]
+    mid = 0.5 * (l + r)
+    side = 0.5 * (l - r)
+    mid_rms = float(np.sqrt(np.mean(mid ** 2)))
+    side_rms = float(np.sqrt(np.mean(side ** 2)))
+    if mid_rms < 1e-10 or side_rms < 1e-10:
+        return -120.0
+    return float(20.0 * np.log10(side_rms / mid_rms))
+
+
+def measure_band_correlation(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
+    """L/R correlation in a band, useful for high-frequency phase-smear detection."""
+    if audio.ndim < 2 or audio.shape[0] < 2:
+        return 1.0
+    band = _band_limited(audio, sr, low_hz, high_hz)
+    l, r = band[0], band[1]
+    if float(np.std(l)) < 1e-10 or float(np.std(r)) < 1e-10:
+        return 1.0
+    corr = float(np.corrcoef(l, r)[0, 1])
+    if not np.isfinite(corr):
+        return 1.0
+    return corr
+
+
+def measure_band_crest_factor(audio: np.ndarray, sr: int, low_hz: float, high_hz: float) -> float:
+    """Peak/RMS crest in a band; high HF crest can indicate brittle spikes/fizz."""
+    band = _band_limited(audio, sr, low_hz, high_hz)
+    return measure_crest_factor(band)
+
+
 def measure_spectral_flatness(audio: np.ndarray, sr: int) -> float:
     """Wiener entropy: 0 = pure tone / resonant, 1 = white noise / flat.
 

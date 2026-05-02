@@ -11,8 +11,8 @@ if [ "$#" -lt 3 ]; then
   exit 2
 fi
 
-input_path="$1"
-out_dir="$2"
+input_path="$(normalize_path_arg "$1")"
+out_dir="$(normalize_path_arg "$2")"
 basename="$3"
 if [ "$#" -ge 4 ]; then
   targets="${*:4}"
@@ -22,6 +22,8 @@ else
 fi
 
 mkdir -p "$out_dir"
+echo "[render] Input:  $input_path"
+echo "[render] Output: $out_dir"
 
 run_master render \
   --input "$(win_path "$input_path")" \

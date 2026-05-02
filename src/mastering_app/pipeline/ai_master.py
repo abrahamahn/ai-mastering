@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,10 @@ import soundfile as sf
 from scipy import signal as scipy_signal
 
 from ..audio.analysis import (
+    measure_band_correlation,
+    measure_band_crest_factor,
     measure_band_db,
+    measure_band_side_to_mid_db,
     measure_crest_factor,
     measure_hf_ratio,
     measure_integrated_lufs,
@@ -50,23 +54,56 @@ def _window_crest_stats(audio: np.ndarray, sr: int) -> dict[str, float]:
 
 
 def _metrics(audio: np.ndarray, sr: int) -> dict[str, float]:
+    sub_db = measure_band_db(audio, sr, 25.0, 120.0)
+    punch_db = measure_band_db(audio, sr, 60.0, 120.0)
+    mud_db = measure_band_db(audio, sr, 180.0, 350.0)
+    low_mid_db = measure_band_db(audio, sr, 180.0, 500.0)
     presence_db = measure_band_db(audio, sr, 500.0, 3000.0)
+    vocal_presence_db = measure_band_db(audio, sr, 1500.0, 4000.0)
     upper_presence_db = measure_band_db(audio, sr, 3000.0, 8000.0)
+    harsh_db = measure_band_db(audio, sr, 4000.0, 8000.0)
     air_db = measure_band_db(audio, sr, 8000.0, min(16000.0, sr * 0.45))
+    fizz_db = measure_band_db(audio, sr, 8000.0, min(14000.0, sr * 0.45))
+    lufs = measure_integrated_lufs(audio, sr)
+    true_peak = measure_true_peak_dbfs(audio)
+    high_side_to_mid_db = measure_band_side_to_mid_db(audio, sr, 6000.0, min(14000.0, sr * 0.45))
+    presence_side_to_mid_db = measure_band_side_to_mid_db(audio, sr, 2000.0, 6000.0)
+    high_band_correlation = measure_band_correlation(audio, sr, 6000.0, min(14000.0, sr * 0.45))
+    hf_crest_db = measure_band_crest_factor(audio, sr, 4000.0, min(14000.0, sr * 0.45))
     metrics = {
-        "lufs": measure_integrated_lufs(audio, sr),
-        "true_peak_dbfs": measure_true_peak_dbfs(audio),
+        "lufs": lufs,
+        "true_peak_dbfs": true_peak,
         "sample_peak_dbfs": measure_sample_peak_dbfs(audio),
+        "plr_db": true_peak - lufs,
         "crest_factor_db": measure_crest_factor(audio),
         "stereo_correlation": measure_stereo_correlation(audio),
         "side_to_mid_db": measure_side_to_mid_db(audio),
-        "sub_db": measure_band_db(audio, sr, 25.0, 120.0),
-        "low_mid_db": measure_band_db(audio, sr, 180.0, 500.0),
+        "sub_db": sub_db,
+        "punch_db": punch_db,
+        "mud_db": mud_db,
+        "punch_to_mud_db": punch_db - mud_db,
+        "low_mid_db": low_mid_db,
         "presence_db": presence_db,
+        "vocal_presence_db": vocal_presence_db,
         "upper_presence_db": upper_presence_db,
+        "harsh_db": harsh_db,
+        "harsh_to_vocal_db": harsh_db - vocal_presence_db,
         "air_db": air_db,
+        "fizz_db": fizz_db,
+        "fizz_to_vocal_db": fizz_db - vocal_presence_db,
         "air_to_presence_db": air_db - presence_db,
         "upper_to_presence_db": upper_presence_db - presence_db,
+        "high_side_to_mid_db": high_side_to_mid_db,
+        "presence_side_to_mid_db": presence_side_to_mid_db,
+        "high_band_correlation": high_band_correlation,
+        "hf_crest_db": hf_crest_db,
+        "artifact_index": (
+            max(0.0, harsh_db - vocal_presence_db)
+            + max(0.0, fizz_db - vocal_presence_db)
+            + max(0.0, high_side_to_mid_db + 8.0) * 0.35
+            + max(0.0, hf_crest_db - 12.0) * 0.25
+            + max(0.0, -high_band_correlation) * 4.0
+        ),
         "hf_ratio": measure_hf_ratio(audio, sr, threshold_hz=8000.0),
     }
     metrics.update(_window_crest_stats(audio, sr))
@@ -218,6 +255,110 @@ def _harshness_adjustment(source_metrics: dict[str, float], candidate_metrics: d
     return float(np.clip(score, -10.0, 12.0))
 
 
+def _musical_restoration_score(
+    source_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+) -> tuple[float, list[str]]:
+    """Reward the actual target: musical color, punch, width, and AI-artifact reduction."""
+    score = 0.0
+    notes: list[str] = []
+
+    punch_delta = candidate_metrics["punch_to_mud_db"] - source_metrics["punch_to_mud_db"]
+    low_mid_delta = _normalized_band_delta(source_metrics, candidate_metrics, "low_mid_db")
+    vocal_delta = _normalized_band_delta(source_metrics, candidate_metrics, "vocal_presence_db")
+    harsh_delta = candidate_metrics["harsh_to_vocal_db"] - source_metrics["harsh_to_vocal_db"]
+    fizz_delta = candidate_metrics["fizz_to_vocal_db"] - source_metrics["fizz_to_vocal_db"]
+    artifact_delta = candidate_metrics["artifact_index"] - source_metrics["artifact_index"]
+    presence_width_delta = candidate_metrics["presence_side_to_mid_db"] - source_metrics["presence_side_to_mid_db"]
+    high_width_delta = candidate_metrics["high_side_to_mid_db"] - source_metrics["high_side_to_mid_db"]
+    high_corr_delta = candidate_metrics["high_band_correlation"] - source_metrics["high_band_correlation"]
+    plr_delta = candidate_metrics["plr_db"] - source_metrics["plr_db"]
+    loud_crest_delta = candidate_metrics["loud_window_crest_db"] - source_metrics["loud_window_crest_db"]
+
+    if 0.25 <= punch_delta <= 2.4:
+        reward = min(7.0, punch_delta * 2.8)
+        score += reward
+        notes.append(f"punch/mud balance improved {punch_delta:+.2f} dB")
+    elif punch_delta > 3.2:
+        score -= min(5.0, (punch_delta - 3.2) * 2.0)
+        notes.append(f"punch tilt may be exaggerated {punch_delta:+.2f} dB")
+
+    if 0.15 <= low_mid_delta <= 1.6:
+        reward = min(6.0, low_mid_delta * 2.5)
+        score += reward
+        notes.append(f"analog warmth/low-mid body {low_mid_delta:+.2f} dB")
+    elif low_mid_delta > 2.3:
+        score -= min(6.0, (low_mid_delta - 2.3) * 3.0)
+        notes.append(f"low-mid warmth risks mud {low_mid_delta:+.2f} dB")
+
+    if -0.35 <= vocal_delta <= 1.4:
+        score += min(5.0, max(0.0, vocal_delta + 0.35) * 1.8)
+    elif vocal_delta < -0.8:
+        score -= min(10.0, abs(vocal_delta + 0.8) * 5.0)
+        notes.append(f"vocal/emotional presence lost {vocal_delta:+.2f} dB")
+
+    if -4.0 <= harsh_delta <= -0.35:
+        reward = min(8.0, abs(harsh_delta) * 2.2)
+        score += reward
+        notes.append(f"harsh/vocal ratio improved {harsh_delta:+.2f} dB")
+    elif harsh_delta > 0.25:
+        score -= min(8.0, harsh_delta * 2.5)
+        notes.append(f"harshness increased {harsh_delta:+.2f} dB")
+
+    if -4.5 <= fizz_delta <= -0.35:
+        reward = min(7.0, abs(fizz_delta) * 1.8)
+        score += reward
+        notes.append(f"AI fizz/shimmer reduced {fizz_delta:+.2f} dB")
+    elif fizz_delta > 0.25:
+        score -= min(8.0, fizz_delta * 2.2)
+        notes.append(f"AI fizz/shimmer increased {fizz_delta:+.2f} dB")
+
+    if artifact_delta < -0.25:
+        reward = min(9.0, abs(artifact_delta) * 1.4)
+        score += reward
+        notes.append(f"artifact index improved {artifact_delta:+.2f}")
+    elif artifact_delta > 0.4:
+        score -= min(10.0, artifact_delta * 1.6)
+        notes.append(f"artifact index worsened {artifact_delta:+.2f}")
+
+    if 0.2 <= presence_width_delta <= 2.2:
+        reward = min(6.0, presence_width_delta * 2.0)
+        score += reward
+        notes.append(f"presence-band stereo width improved {presence_width_delta:+.2f} dB")
+    elif presence_width_delta < -0.7:
+        score -= min(8.0, abs(presence_width_delta + 0.7) * 3.0)
+        notes.append(f"presence-band image narrowed {presence_width_delta:+.2f} dB")
+
+    # Wide high sides can be desirable, but on Suno artifacts they often mean phasey fizz.
+    if source_metrics["high_side_to_mid_db"] > -8.0 and -2.0 <= high_width_delta <= -0.25:
+        score += min(4.0, abs(high_width_delta) * 1.3)
+        notes.append(f"phasey side-highs stabilized {high_width_delta:+.2f} dB")
+    elif high_width_delta > 2.0:
+        score -= min(6.0, (high_width_delta - 2.0) * 2.0)
+        notes.append(f"side-high widening may expose artifacts {high_width_delta:+.2f} dB")
+
+    if source_metrics["high_band_correlation"] < -0.05 and high_corr_delta > 0.05:
+        score += min(5.0, high_corr_delta * 8.0)
+        notes.append(f"high-band phase correlation improved {high_corr_delta:+.3f}")
+    if candidate_metrics["high_band_correlation"] < -0.18:
+        score -= min(7.0, abs(candidate_metrics["high_band_correlation"] + 0.18) * 10.0)
+        notes.append(f"high-band phase remains unstable {candidate_metrics['high_band_correlation']:+.3f}")
+
+    if plr_delta >= -0.5:
+        score += min(4.0, (plr_delta + 0.5) * 1.2)
+    elif plr_delta < -1.2:
+        score -= min(8.0, abs(plr_delta + 1.2) * 4.0)
+        notes.append(f"peak-loudness ratio reduced {plr_delta:+.2f} dB")
+
+    if loud_crest_delta >= -0.45:
+        score += min(4.0, (loud_crest_delta + 0.45) * 1.5)
+    elif loud_crest_delta < -1.0:
+        score -= min(8.0, abs(loud_crest_delta + 1.0) * 4.0)
+        notes.append(f"loudest section got less dynamic {loud_crest_delta:+.2f} dB")
+
+    return float(np.clip(score, -24.0, 42.0)), notes
+
+
 def _score_candidate(source_metrics: dict[str, float], candidate_metrics: dict[str, float], target_lufs: float) -> tuple[float, list[str]]:
     score = 100.0
     notes: list[str] = []
@@ -331,8 +472,8 @@ def _score_candidate(source_metrics: dict[str, float], candidate_metrics: dict[s
         score -= min(10.0, (lufs_gain - 3.0) * 3.0)
         notes.append(f"too much loudness gain {lufs_gain:+.2f} dB")
 
-    if streaming_turn_down_db > 1.5:
-        penalty = min(18.0, (streaming_turn_down_db - 1.5) * 3.0)
+    if streaming_turn_down_db > 2.5:
+        penalty = min(5.0, (streaming_turn_down_db - 2.5) * 0.8)
         score -= penalty
         notes.append(f"streaming turn-down risk {streaming_turn_down_db:.2f} dB")
     elif streaming_turn_down_db <= 0.5 and target_lufs <= STREAMING_REFERENCE_LUFS + 0.5:
@@ -352,6 +493,12 @@ def _score_candidate(source_metrics: dict[str, float], candidate_metrics: dict[s
     score += audible_polish
     if abs(audible_polish) >= 1.0:
         notes.append(f"audible polish score {audible_polish:+.1f}")
+
+    musical, musical_notes = _musical_restoration_score(source_metrics, candidate_metrics)
+    score += musical
+    if abs(musical) >= 1.0:
+        notes.append(f"musical restoration score {musical:+.1f}")
+    notes.extend(musical_notes)
 
     return float(round(score, 3)), notes
 
@@ -421,6 +568,66 @@ def _render_candidate(
     }
 
 
+def _render_candidate_from_path(
+    input_path: str,
+    source_metrics: dict[str, float],
+    out_dir: str,
+    basename: str,
+    requested_target: float,
+    settings: MasteringSettings,
+) -> dict[str, Any]:
+    source_audio, sr = _read_audio(input_path)
+    return _render_candidate(
+        source_audio,
+        sr,
+        source_metrics,
+        Path(out_dir),
+        basename,
+        requested_target,
+        settings,
+    )
+
+
+def _render_initial_candidates(
+    input_path: Path,
+    source_audio: np.ndarray,
+    sr: int,
+    source_metrics: dict[str, float],
+    out_dir: Path,
+    basename: str,
+    target_lufs: float,
+    settings_catalog: list[MasteringSettings],
+    jobs: int,
+) -> list[dict[str, Any]]:
+    if jobs <= 1 or len(settings_catalog) <= 1:
+        return [
+            _render_candidate(source_audio, sr, source_metrics, out_dir, basename, target_lufs, settings)
+            for settings in settings_catalog
+        ]
+
+    workers = max(1, min(jobs, len(settings_catalog)))
+    print(f"  [ai-master] Rendering {len(settings_catalog)} candidates with {workers} worker processes")
+    results: dict[int, dict[str, Any]] = {}
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(
+                _render_candidate_from_path,
+                str(input_path),
+                source_metrics,
+                str(out_dir),
+                basename,
+                target_lufs,
+                settings,
+            ): index
+            for index, settings in enumerate(settings_catalog)
+        }
+        for future in as_completed(future_map):
+            index = future_map[future]
+            results[index] = future.result()
+
+    return [results[index] for index in range(len(settings_catalog))]
+
+
 def _source_candidate(input_path: Path, out_dir: Path, basename: str, audio: np.ndarray, sr: int) -> dict[str, Any]:
     output_name = f"{basename}_ai_original.wav"
     output_path = out_dir / output_name
@@ -447,21 +654,25 @@ def _candidate_passes_release_guards(source_metrics: dict[str, float], candidate
     if candidate["name"] == "original":
         return True
     metrics = candidate["metrics"]
-    if metrics["presence_db"] - source_metrics["presence_db"] < -1.2:
+    if metrics["presence_db"] - source_metrics["presence_db"] < -1.6:
         return False
-    if metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"] < -1.2:
+    if metrics["side_to_mid_db"] - source_metrics["side_to_mid_db"] < -1.6:
         return False
-    if metrics["stereo_correlation"] - source_metrics["stereo_correlation"] > 0.08:
+    if metrics["stereo_correlation"] - source_metrics["stereo_correlation"] > 0.12:
         return False
-    if metrics["sub_db"] - source_metrics["sub_db"] > 2.0:
+    if metrics["sub_db"] - source_metrics["sub_db"] > 2.4:
         return False
-    if metrics["hf_ratio"] - source_metrics["hf_ratio"] > 0.02:
+    if metrics["hf_ratio"] - source_metrics["hf_ratio"] > 0.03:
+        return False
+    if metrics.get("artifact_index", 0.0) - source_metrics.get("artifact_index", 0.0) > 1.5:
+        return False
+    if metrics.get("high_band_correlation", 1.0) < -0.25:
         return False
     if _source_is_harsh(source_metrics) and metrics["air_db"] - source_metrics["air_db"] > -0.2:
         return False
     if (
         source_metrics["loud_window_crest_db"] >= 6.0
-        and metrics["loud_window_crest_db"] - source_metrics["loud_window_crest_db"] < -1.6
+        and metrics["loud_window_crest_db"] - source_metrics["loud_window_crest_db"] < -1.8
     ):
         return False
     return True
@@ -647,6 +858,7 @@ def render_ai_master(
     model: str,
     use_local_models: bool | None,
     json_out: Path | None,
+    jobs: int = 1,
 ) -> dict[str, Any]:
     if not input_path.exists():
         raise FileNotFoundError(f"Input WAV not found: {input_path}")
@@ -665,7 +877,19 @@ def render_ai_master(
     settings_by_name: dict[str, MasteringSettings] = {}
     for settings in settings_catalog:
         settings_by_name[settings.name] = settings
-        candidates.append(_render_candidate(source_audio, sr, source_metrics, out_dir, basename, target_lufs, settings))
+    candidates.extend(
+        _render_initial_candidates(
+            input_path,
+            source_audio,
+            sr,
+            source_metrics,
+            out_dir,
+            basename,
+            target_lufs,
+            settings_catalog,
+            max(1, jobs),
+        )
+    )
 
     local_model_report = apply_local_model_scores(candidates, source_audio, sr, style, use_local_models)
 
@@ -724,6 +948,7 @@ def render_ai_master(
         "style": style,
         "comment_intent": comment_intent.to_dict(),
         "target_lufs": target_lufs,
+        "jobs": max(1, jobs),
         "model": model if use_ai else None,
         "source_metrics": source_metrics,
         "local_model_scoring": local_model_report,

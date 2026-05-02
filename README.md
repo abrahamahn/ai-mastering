@@ -47,6 +47,27 @@ apps/mastering/
 
 Machine-specific paths and secrets belong in `.env.local`. Commit `.env.example`, not `.env.local`.
 
+### Quick Run
+
+Use the root launcher for day-to-day tests:
+
+```bash
+./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
+```
+
+Defaults:
+
+1. `./master.sh` masters the newest source WAV in `/mnt/c/Production/music/Submission`.
+2. Output goes to `<input folder>/masters`.
+3. `MASTERING_JOBS=2` renders initial candidates in parallel by default through the wrapper.
+4. `MASTERING_LOCAL_MODELS=0` disables optional CLAP/MERT scoring when you want faster offline tests.
+
+Example fast run:
+
+```bash
+MASTERING_LOCAL_MODELS=0 MASTERING_JOBS=2 ./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
+```
+
 ## 4. Methods
 
 ### 4.1 Deterministic Signal Analysis
@@ -61,6 +82,10 @@ The system computes low-level audio descriptors before and after processing:
 6. Stereo correlation.
 7. Side-to-mid energy ratio.
 8. Band energy in sub, low-mid, presence, and air regions.
+9. Punch-to-mud balance, vocal presence, harsh-to-vocal, and fizz-to-vocal ratios.
+10. Band-limited stereo width/correlation for phasey high-frequency artifact detection.
+11. Peak-loudness ratio and loudest-section crest for dynamic preservation.
+12. An artifact index that combines brittle high-frequency imbalance, side-high excess, high-band crest, and negative high-band correlation.
 
 These metrics are used as release guards. A candidate is penalized or rejected if it loses too much presence, narrows the stereo image, over-raises sub energy, clips true peak, or compresses the source excessively.
 
@@ -116,8 +141,12 @@ Processing values are bounded and source-dependent. The chain is designed to pre
 8. `punch_warm_dynamic`: the same warmth direction with less late-section limiting.
 9. `controlled_shimmer`: stronger AI-shimmer cleanup.
 10. `deharsh_gullfoss`: targeted high-end de-harshing for brittle sources.
-11. `inflator_weiss_density`: perceived loudness/density with Weiss MM-1 final limiting.
-12. Optional AI-refined candidates when OpenAI audio judging is enabled.
+11. `analog_warm_punch`: tape-led warmth and low-mid harmonic body.
+12. `musical_restore`: tone-first analog color, punch, vocal presence, width, and restrained de-harshing.
+13. `ai_artifact_repair`: stronger repair pass for brittle/time-stretched side highs and phasey fizz.
+14. `dynamic_punch_image`: low-end punch, wider image, and stricter chorus/drop crest preservation.
+15. `inflator_weiss_density`: perceived loudness/density with Weiss MM-1 final limiting.
+16. Optional AI-refined candidates when OpenAI audio judging is enabled.
 
 Before rendering, the free-form style/comment is parsed by a deterministic intent mapper. This is not an LLM step. Matched words such as `less squashed`, `harsh`, `wide`, `warm`, `muffled`, `preserve original`, or `vocal forward` produce bounded plugin-setting overrides and score biases. The applied mapping is written into `ai-mastering-report.json` and shown in `ai-mastering-report.html` under `Comment Intent`.
 

@@ -305,6 +305,8 @@ def render_ai_html_report(report: dict[str, Any]) -> str:
             <th>Loud Crest</th>
             <th>Presence</th>
             <th>Air</th>
+            <th>Punch/Mud</th>
+            <th>Artifact</th>
             <th>Width</th>
             <th>Active Optional Modules</th>
           </tr>
@@ -361,6 +363,8 @@ def _overview_row(candidate: dict[str, Any], source_metrics: Metric, best_name: 
       <td>{_metric_delta(metrics, source_metrics, "loud_window_crest_db", "dB", positive_good=True)}</td>
       <td>{_metric_delta(metrics, source_metrics, "presence_db", "dB", positive_good=True)}</td>
       <td>{_metric_delta(metrics, source_metrics, "air_db", "dB", positive_good=False)}</td>
+      <td>{_metric_delta(metrics, source_metrics, "punch_to_mud_db", "dB", positive_good=True)}</td>
+      <td>{_metric_delta(metrics, source_metrics, "artifact_index", "", positive_good=False)}</td>
       <td>{_metric_delta(metrics, source_metrics, "side_to_mid_db", "dB", positive_good=True)}</td>
       <td>{escape(modules)}</td>
     </tr>"""
@@ -378,9 +382,18 @@ def _candidate_card(candidate: dict[str, Any], source_metrics: Metric, best_name
         for label, key, unit, positive_good, limit in [
             ("LUFS", "lufs", "LUFS", False, 4.0),
             ("Loud Section Crest", "loud_window_crest_db", "dB", True, 4.0),
+            ("PLR", "plr_db", "dB", True, 4.0),
+            ("Punch / Mud", "punch_to_mud_db", "dB", True, 4.0),
             ("Presence", "presence_db", "dB", True, 4.0),
+            ("Vocal Presence", "vocal_presence_db", "dB", True, 4.0),
             ("Air / Harshness", "air_db", "dB", False, 4.0),
+            ("Harsh / Vocal", "harsh_to_vocal_db", "dB", False, 4.0),
+            ("Fizz / Vocal", "fizz_to_vocal_db", "dB", False, 4.0),
+            ("Artifact Index", "artifact_index", "", False, 4.0),
             ("Stereo Width", "side_to_mid_db", "dB", True, 3.0),
+            ("Presence Width", "presence_side_to_mid_db", "dB", True, 3.0),
+            ("Side Highs", "high_side_to_mid_db", "dB", False, 3.0),
+            ("High Corr", "high_band_correlation", "", True, 0.4),
             ("Sub / Low Bass", "sub_db", "dB", False, 4.0),
             ("True Peak", "true_peak_dbfs", "dBFS", False, 2.0),
             ("HF Ratio", "hf_ratio", "", False, 0.08),

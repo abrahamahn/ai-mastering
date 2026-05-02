@@ -2,8 +2,27 @@
 """CLI entry point for the standalone mastering app."""
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+
+def _cli_path(value: str | os.PathLike[str]) -> Path:
+    """Accept WSL /mnt/<drive> paths when this CLI is executed by Windows Python."""
+    text = str(value).strip()
+    normalized = text.replace("\\", "/")
+    if os.name == "nt" and normalized.lower().startswith("/mnt/") and len(normalized) >= 7:
+        drive = normalized[5]
+        if drive.isalpha() and normalized[6] == "/":
+            return Path(f"{drive.upper()}:/{normalized[7:]}")
+    return Path(text)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
 
 
 def cmd_check() -> bool:
@@ -54,8 +73,8 @@ def cmd_master(input_path: str, output_path: str, target_lufs: float) -> None:
     from .pipeline.chain import process
     import soundfile as sf
 
-    in_path = Path(input_path)
-    out_path = Path(output_path)
+    in_path = _cli_path(input_path)
+    out_path = _cli_path(output_path)
 
     if not in_path.exists():
         print(f"[master] ERROR: input not found: {in_path}", file=sys.stderr)
@@ -77,8 +96,8 @@ def cmd_render(input_path: str, out_dir: str, basename: str, targets: str, json_
     from .pipeline.render import parse_targets, render_targets, write_report
 
     parsed_targets = parse_targets(targets)
-    report = render_targets(Path(input_path), Path(out_dir), basename, parsed_targets)
-    write_report(report, Path(json_out) if json_out else None)
+    report = render_targets(_cli_path(input_path), _cli_path(out_dir), basename, parsed_targets)
+    write_report(report, _cli_path(json_out) if json_out else None)
 
 
 def cmd_ai_render(
@@ -92,12 +111,13 @@ def cmd_ai_render(
     model: str,
     local_models: bool | None,
     json_out: str | None,
+    jobs: int,
 ) -> None:
     from .pipeline.ai_master import render_ai_master
 
     render_ai_master(
-        Path(input_path),
-        Path(out_dir),
+        _cli_path(input_path),
+        _cli_path(out_dir),
         basename,
         target_lufs,
         style,
@@ -105,7 +125,8 @@ def cmd_ai_render(
         use_ai,
         model,
         local_models,
-        Path(json_out) if json_out else None,
+        _cli_path(json_out) if json_out else None,
+        jobs,
     )
 
 
@@ -220,6 +241,12 @@ def main() -> None:
     )
     ai_parser.add_argument('--rounds', type=int, default=1, help='AI refinement rounds after initial candidates')
     ai_parser.add_argument('--model', default='gpt-audio', help='OpenAI audio-capable model for A/B judging')
+    ai_parser.add_argument(
+        '--jobs',
+        type=int,
+        default=max(1, _env_int('MASTERING_JOBS', 1)),
+        help='Parallel worker processes for initial candidate rendering; use 2-4 conservatively for VST stability',
+    )
     ai_parser.add_argument('--no-ai', action='store_true', help='Disable OpenAI calls and use metric scoring only')
     local_model_group = ai_parser.add_mutually_exclusive_group()
     local_model_group.add_argument(
@@ -294,6 +321,7 @@ def main() -> None:
             args.model,
             args.local_models,
             args.json_out,
+            args.jobs,
         )
         return
 
