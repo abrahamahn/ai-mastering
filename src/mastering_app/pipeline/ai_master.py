@@ -36,6 +36,7 @@ from .settings import MasteringSettings, bounded_settings, candidate_settings
 from ..audio.source_match import restore_source_balance
 from ..models.local_scorer import apply_local_model_scores
 from ..history.ranker import TasteRanker
+from ..restoration.apollo import restore_with_apollo
 
 
 def _safe_name(name: str) -> str:
@@ -628,6 +629,97 @@ def _render_initial_candidates(
     return [results[index] for index in range(len(settings_catalog))]
 
 
+def _restored_source_candidate(
+    restored_path: Path,
+    basename: str,
+    audio: np.ndarray,
+    sr: int,
+    source_metrics: dict[str, float],
+    engine: str,
+) -> dict[str, Any]:
+    metrics = _metrics(audio, sr)
+    score, score_notes = _score_candidate(source_metrics, metrics, source_metrics["lufs"])
+    score_notes = [
+        f"{engine} restored source before VST mastering",
+        *score_notes,
+    ]
+    return {
+        "name": f"{engine}_restored",
+        "description": f"{engine} restored source reference; no VST mastering chain",
+        "path": str(restored_path),
+        "file": restored_path.name,
+        "requested_target_lufs": metrics["lufs"],
+        "target_lufs": metrics["lufs"],
+        "settings": None,
+        "restoration": {"engine": engine, "stage": "source"},
+        "metrics": metrics,
+        "metric_score": score,
+        "metric_score_notes": score_notes,
+        "score": score,
+        "score_notes": list(score_notes),
+        "warnings": [],
+    }
+
+
+def _restored_candidate_settings(settings_catalog: list[MasteringSettings], engine: str) -> list[MasteringSettings]:
+    selected = {
+        "musical_restore",
+        "ai_artifact_repair",
+        "dynamic_punch_image",
+    }
+    restored: list[MasteringSettings] = []
+    for settings in settings_catalog:
+        if settings.name not in selected:
+            continue
+        restored.append(
+            bounded_settings(
+                settings,
+                f"{engine}_{settings.name}",
+                f"{engine} restoration -> {settings.description}",
+                {
+                    # Keep Apollo candidates tone-first. The restoration source already changes
+                    # texture, so avoid source-match rollback and heavy limiting artifacts.
+                    "source_match_presence_max_db": min(settings.source_match_presence_max_db, 1.2),
+                    "source_match_side_max_db": min(settings.source_match_side_max_db, 1.4),
+                    "source_match_sub_trim_max_db": min(settings.source_match_sub_trim_max_db, 0.5),
+                    "loud_section_max_crest_loss_db": min(settings.loud_section_max_crest_loss_db, 0.6),
+                },
+            )
+        )
+    return restored
+
+
+def _render_restored_candidates(
+    restored_path: Path,
+    restored_audio: np.ndarray,
+    sr: int,
+    source_metrics: dict[str, float],
+    out_dir: Path,
+    basename: str,
+    target_lufs: float,
+    settings_catalog: list[MasteringSettings],
+    jobs: int,
+    engine: str,
+) -> list[dict[str, Any]]:
+    settings = _restored_candidate_settings(settings_catalog, engine)
+    if not settings:
+        return []
+    rendered = _render_initial_candidates(
+        restored_path,
+        restored_audio,
+        sr,
+        source_metrics,
+        out_dir,
+        basename,
+        target_lufs,
+        settings,
+        jobs,
+    )
+    for candidate in rendered:
+        candidate["restoration"] = {"engine": engine, "source": str(restored_path)}
+    return rendered
+
+
 def _source_candidate(input_path: Path, out_dir: Path, basename: str, audio: np.ndarray, sr: int) -> dict[str, Any]:
     output_name = f"{basename}_ai_original.wav"
     output_path = out_dir / output_name
@@ -859,6 +951,7 @@ def render_ai_master(
     use_local_models: bool | None,
     json_out: Path | None,
     jobs: int = 1,
+    use_apollo: bool | None = None,
 ) -> dict[str, Any]:
     if not input_path.exists():
         raise FileNotFoundError(f"Input WAV not found: {input_path}")
@@ -872,6 +965,30 @@ def render_ai_master(
         f"{', '.join(comment_intent.tags) if comment_intent.tags else 'neutral'}"
     )
     candidates: list[dict[str, Any]] = [_source_candidate(input_path, out_dir, basename, source_audio, sr)]
+    restored_sources: list[tuple[str, Path, np.ndarray, int]] = []
+    restoration_report: dict[str, Any] = {}
+
+    apollo_path, apollo_report = restore_with_apollo(input_path, out_dir, basename, use_apollo)
+    restoration_report["apollo"] = apollo_report
+    if apollo_path:
+        try:
+            apollo_audio, apollo_sr = _read_audio(str(apollo_path))
+            candidates.append(
+                _restored_source_candidate(
+                    apollo_path,
+                    basename,
+                    apollo_audio,
+                    apollo_sr,
+                    source_metrics,
+                    "apollo",
+                )
+            )
+            restored_sources.append(("apollo", apollo_path, apollo_audio, apollo_sr))
+            print(f"  [ai-master] Apollo restoration ready: {apollo_path.name}")
+        except Exception as exc:
+            apollo_report.update({"ok": False, "error": f"Could not read Apollo output: {exc}"})
+    elif apollo_report.get("enabled"):
+        print(f"  [ai-master] Apollo restoration skipped: {apollo_report.get('error', 'no output')}")
 
     settings_catalog = apply_intent_to_settings(candidate_settings(style), comment_intent)
     settings_by_name: dict[str, MasteringSettings] = {}
@@ -890,6 +1007,24 @@ def render_ai_master(
             max(1, jobs),
         )
     )
+    for engine, restored_path, restored_audio, restored_sr in restored_sources:
+        restored_settings = _restored_candidate_settings(settings_catalog, engine)
+        for settings in restored_settings:
+            settings_by_name[settings.name] = settings
+        candidates.extend(
+            _render_restored_candidates(
+                restored_path,
+                restored_audio,
+                restored_sr,
+                source_metrics,
+                out_dir,
+                basename,
+                target_lufs,
+                settings_catalog,
+                max(1, min(jobs, len(restored_settings) or 1)),
+                engine,
+            )
+        )
 
     local_model_report = apply_local_model_scores(candidates, source_audio, sr, style, use_local_models)
 
@@ -951,6 +1086,7 @@ def render_ai_master(
         "jobs": max(1, jobs),
         "model": model if use_ai else None,
         "source_metrics": source_metrics,
+        "restoration": restoration_report,
         "local_model_scoring": local_model_report,
         "best_candidate": best["name"],
         "best_path": str(best_output),

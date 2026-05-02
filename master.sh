@@ -34,6 +34,7 @@ Examples:
   ./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
   MASTERING_LOCAL_MODELS=0 ./master.sh
   MASTERING_REFERENCE_DIR=/mnt/c/Production/music/references ./master.sh
+  MASTERING_APOLLO=1 MASTERING_APOLLO_REPO=/mnt/c/path/to/Apollo ./master.sh
 EOF
 }
 

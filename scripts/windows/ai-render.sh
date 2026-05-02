@@ -33,6 +33,12 @@ env_prefix="$(build_env_prefix \
   MASTERING_LOCAL_MODELS_OFFLINE \
   MASTERING_MODEL_DEVICE \
   MASTERING_MODEL_CLIP_SECONDS \
+  MASTERING_APOLLO \
+  MASTERING_APOLLO_REPO \
+  MASTERING_APOLLO_PYTHON \
+  MASTERING_APOLLO_SCRIPT \
+  MASTERING_APOLLO_COMMAND \
+  MASTERING_APOLLO_ARGS \
   MASTERING_CLAP \
   MASTERING_CLAP_MODEL \
   MASTERING_CLAP_WEIGHT \
@@ -52,6 +58,13 @@ case "${MASTERING_LOCAL_MODELS:-}" in
     ;;
 esac
 
+apollo_args=()
+case "${MASTERING_APOLLO:-}" in
+  1|true|TRUE|yes|YES|on|ON)
+    apollo_args=(--apollo)
+    ;;
+esac
+
 run_master_with_env_prefix "$env_prefix" ai-render \
   --input "$(win_path "$input_path")" \
   --out-dir "$(win_path "$out_dir")" \
@@ -60,4 +73,5 @@ run_master_with_env_prefix "$env_prefix" ai-render \
   "--jobs=$jobs" \
   --style "$style" \
   "${local_models_args[@]}" \
+  "${apollo_args[@]}" \
   --json-out "$(win_path "$out_dir/ai-mastering-report.json")"

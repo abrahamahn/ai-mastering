@@ -26,6 +26,7 @@ def render_ai_html_report(report: dict[str, Any]) -> str:
     )
     cards = "\n".join(_candidate_card(candidate, source_metrics, best_name) for candidate in candidates)
     intent_section = _intent_section(report.get("comment_intent") or {})
+    restoration_section = _restoration_section(report.get("restoration") or {})
 
     return f"""<!doctype html>
 <html lang="en">
@@ -294,6 +295,7 @@ def render_ai_html_report(report: dict[str, Any]) -> str:
   </header>
   <main>
     {intent_section}
+    {restoration_section}
     <h2>Candidate Overview</h2>
     <section class="panel">
       <table>
@@ -351,10 +353,33 @@ def _intent_section(intent: dict[str, Any]) -> str:
     </section>"""
 
 
+def _restoration_section(restoration: dict[str, Any]) -> str:
+    if not restoration:
+        return ""
+    rows = []
+    for name, item in restoration.items():
+        if not isinstance(item, dict):
+            continue
+        status = "ok" if item.get("ok") else ("disabled" if not item.get("enabled") else "skipped")
+        detail = item.get("path") or item.get("error") or item.get("reason") or ""
+        rows.append(
+            f"<tr><td>{escape(str(name))}</td><td>{escape(status)}</td><td>{escape(str(detail))}</td></tr>"
+        )
+    if not rows:
+        return ""
+    return f"""<h2>Restoration</h2>
+    <section class="panel">
+      <table>
+        <thead><tr><th>Engine</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody>{"".join(rows)}</tbody>
+      </table>
+    </section>"""
+
+
 def _overview_row(candidate: dict[str, Any], source_metrics: Metric, best_name: str | None) -> str:
     metrics = candidate.get("metrics", {})
     settings = candidate.get("settings")
-    modules = ", ".join(_active_optional_modules(settings)) if settings else "none"
+    modules = ", ".join(_active_optional_modules(settings, candidate)) or "none"
     best = ' <span class="badge best">best</span>' if candidate.get("name") == best_name else ""
     return f"""<tr>
       <td><strong>{escape(str(candidate.get("name", "")))}</strong>{best}</td>
@@ -376,7 +401,7 @@ def _candidate_card(candidate: dict[str, Any], source_metrics: Metric, best_name
     metrics = candidate.get("metrics", {})
     is_best = name == best_name
     audio = escape(str(candidate.get("file") or ""))
-    chain = "\n".join(_stage_html(stage) for stage in _chain_stages(settings))
+    chain = "\n".join(_stage_html(stage) for stage in _chain_stages(settings, candidate))
     metric_cards = "\n".join(
         _metric_card(label, metrics, source_metrics, key, unit, positive_good, limit)
         for label, key, unit, positive_good, limit in [
@@ -422,13 +447,28 @@ def _candidate_card(candidate: dict[str, Any], source_metrics: Metric, best_name
     </section>"""
 
 
-def _chain_stages(settings: dict[str, Any] | None) -> list[dict[str, str]]:
+def _chain_stages(settings: dict[str, Any] | None, candidate: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    restoration = (candidate or {}).get("restoration") or {}
     if not settings:
+        if restoration:
+            engine = str(restoration.get("engine", "external"))
+            return [{
+                "name": f"{engine} Restoration",
+                "kind": "optional",
+                "details": "External restoration candidate before VST mastering.",
+            }]
         return [{"name": "Original Source", "kind": "final", "details": "No processing. Reference candidate."}]
 
     stages = [
         {"name": "Corrective EQ + Pro-Q 3", "kind": "core", "details": _on_off(settings.get("corrective_eq_enabled"))},
     ]
+    if restoration:
+        engine = str(restoration.get("engine", "external"))
+        stages.insert(0, {
+            "name": f"{engine} Restoration",
+            "kind": "optional",
+            "details": "External repair pass before the mastering chain.",
+        })
     if settings.get("gullfoss_enabled"):
         stages.append({
             "name": "Gullfoss Master",
@@ -527,10 +567,13 @@ def _chain_stages(settings: dict[str, Any] | None) -> list[dict[str, str]]:
     return stages
 
 
-def _active_optional_modules(settings: dict[str, Any] | None) -> list[str]:
-    if not settings:
-        return []
+def _active_optional_modules(settings: dict[str, Any] | None, candidate: dict[str, Any] | None = None) -> list[str]:
     modules = []
+    restoration = (candidate or {}).get("restoration") or {}
+    if restoration:
+        modules.append(str(restoration.get("engine", "Restoration")))
+    if not settings:
+        return modules
     mapping = [
         ("gullfoss_enabled", "Gullfoss"),
         ("bax_enabled", "BAX"),

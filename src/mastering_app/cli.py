@@ -112,6 +112,7 @@ def cmd_ai_render(
     local_models: bool | None,
     json_out: str | None,
     jobs: int,
+    apollo: bool | None,
 ) -> None:
     from .pipeline.ai_master import render_ai_master
 
@@ -127,6 +128,7 @@ def cmd_ai_render(
         local_models,
         _cli_path(json_out) if json_out else None,
         jobs,
+        apollo,
     )
 
 
@@ -262,6 +264,20 @@ def main() -> None:
         action='store_false',
         help='Disable local CLAP/MERT scoring even if MASTERING_LOCAL_MODELS=1',
     )
+    restoration_group = ai_parser.add_mutually_exclusive_group()
+    restoration_group.add_argument(
+        '--apollo',
+        dest='apollo',
+        action='store_true',
+        default=None,
+        help='Enable optional Apollo restoration branch before selected mastering candidates',
+    )
+    restoration_group.add_argument(
+        '--no-apollo',
+        dest='apollo',
+        action='store_false',
+        help='Disable Apollo restoration even if MASTERING_APOLLO=1',
+    )
     ai_parser.add_argument('--json-out', help='Optional path for machine-readable AI mastering report')
 
     single_parser = subcommands.add_parser('single', help='Render one mastered WAV')
@@ -322,6 +338,7 @@ def main() -> None:
             args.local_models,
             args.json_out,
             args.jobs,
+            args.apollo,
         )
         return
 
