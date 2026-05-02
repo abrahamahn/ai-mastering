@@ -113,6 +113,7 @@ def cmd_ai_render(
     json_out: str | None,
     jobs: int,
     apollo: bool | None,
+    apollo_only: bool,
 ) -> None:
     from .pipeline.ai_master import render_ai_master
 
@@ -129,6 +130,7 @@ def cmd_ai_render(
         _cli_path(json_out) if json_out else None,
         jobs,
         apollo,
+        apollo_only,
     )
 
 
@@ -376,6 +378,11 @@ def main() -> None:
         action='store_false',
         help='Disable Apollo restoration even if MASTERING_APOLLO=1',
     )
+    ai_parser.add_argument(
+        '--apollo-only',
+        action='store_true',
+        help='Run only Apollo restoration and skip all VST mastering candidates',
+    )
     ai_parser.add_argument('--json-out', help='Optional path for machine-readable AI mastering report')
 
     single_parser = subcommands.add_parser('single', help='Render one mastered WAV')
@@ -447,6 +454,7 @@ def main() -> None:
             args.json_out,
             args.jobs,
             args.apollo,
+            args.apollo_only,
         )
         return
 

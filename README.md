@@ -86,6 +86,12 @@ Use `--fast` if you want to skip optional CLAP/MERT scoring while testing:
 ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
 ```
 
+Apollo-only restoration test, with no VST mastering candidates:
+
+```bash
+./master.sh --apollo-only --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
+```
+
 Apollo is not bundled and is not enabled by default. When enabled, the app renders the normal mastering candidates plus `apollo_restored` and Apollo-fed variants of the main repair/color candidates so restoration is auditioned against the original-source chain instead of silently replacing it.
 
 Set `MASTERING_LEGACY_CANDIDATES=1` if you want to run the older, larger conservative candidate catalog.

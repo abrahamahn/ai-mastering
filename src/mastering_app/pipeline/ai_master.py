@@ -993,6 +993,7 @@ def render_ai_master(
     json_out: Path | None,
     jobs: int = 1,
     use_apollo: bool | None = None,
+    apollo_only: bool = False,
 ) -> dict[str, Any]:
     if not input_path.exists():
         raise FileNotFoundError(f"Input WAV not found: {input_path}")
@@ -1009,7 +1010,7 @@ def render_ai_master(
     restored_sources: list[tuple[str, Path, np.ndarray, int]] = []
     restoration_report: dict[str, Any] = {}
 
-    apollo_path, apollo_report = restore_with_apollo(input_path, out_dir, basename, use_apollo)
+    apollo_path, apollo_report = restore_with_apollo(input_path, out_dir, basename, True if apollo_only else use_apollo)
     restoration_report["apollo"] = apollo_report
     if apollo_path:
         try:
@@ -1030,6 +1031,62 @@ def render_ai_master(
             apollo_report.update({"ok": False, "error": f"Could not read Apollo output: {exc}"})
     elif apollo_report.get("enabled"):
         print(f"  [ai-master] Apollo restoration skipped: {apollo_report.get('error', 'no output')}")
+
+    if apollo_only:
+        if not apollo_path:
+            raise RuntimeError(
+                "Apollo-only render requested, but Apollo did not produce output: "
+                f"{apollo_report.get('error', 'unknown Apollo error')}"
+            )
+        local_model_report = apply_local_model_scores(candidates, source_audio, sr, style, use_local_models)
+        ranker = TasteRanker()
+        _apply_taste_and_intent(candidates, ranker, comment_intent)
+        best = next(candidate for candidate in candidates if candidate["name"] == "apollo_restored")
+        best_output = out_dir / f"{basename}_ai_best.wav"
+        shutil.copy2(best["path"], best_output)
+        report = {
+            "input": str(input_path),
+            "out_dir": str(out_dir),
+            "basename": basename,
+            "style": style,
+            "comment_intent": comment_intent.to_dict(),
+            "target_lufs": target_lufs,
+            "jobs": max(1, jobs),
+            "model": None,
+            "source_metrics": source_metrics,
+            "restoration": restoration_report,
+            "local_model_scoring": local_model_report,
+            "best_candidate": best["name"],
+            "best_path": str(best_output),
+            "best_reason": "apollo-only restoration test",
+            "ai_rounds": [],
+            "candidates": candidates,
+        }
+        try:
+            from ..history.db import HistoryDB
+            db = HistoryDB()
+            run_id = db.save_run(report)
+            db.close()
+            report["history_run_id"] = run_id
+            print(f"  [ai-master] Run saved to history DB (id={run_id}). "
+                  f"To record your preference: master.py prefer {run_id} <candidate_name>")
+        except Exception as exc:
+            print(f"  [ai-master] WARNING: could not save to history DB: {exc}")
+
+        html_out = json_out.with_suffix(".html") if json_out else out_dir / "ai-mastering-report.html"
+        report["html_report"] = str(html_out)
+        try:
+            write_ai_html_report(report, html_out)
+            print(f"  [ai-master] HTML report written: {html_out}")
+        except Exception as exc:
+            print(f"  [ai-master] WARNING: could not write HTML report: {exc}")
+
+        text = json.dumps(report, indent=2)
+        if json_out:
+            json_out.parent.mkdir(parents=True, exist_ok=True)
+            json_out.write_text(text, encoding="utf-8")
+        print(text)
+        return report
 
     settings_catalog = apply_intent_to_settings(candidate_settings(style), comment_intent)
     settings_by_name: dict[str, MasteringSettings] = {}

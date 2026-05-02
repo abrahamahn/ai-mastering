@@ -35,6 +35,7 @@ env_prefix="$(build_env_prefix \
   MASTERING_MODEL_CLIP_SECONDS \
   MASTERING_LEGACY_CANDIDATES \
   MASTERING_APOLLO \
+  MASTERING_APOLLO_ONLY \
   MASTERING_APOLLO_REPO \
   MASTERING_APOLLO_PYTHON \
   MASTERING_APOLLO_SCRIPT \
@@ -63,6 +64,11 @@ apollo_args=()
 case "${MASTERING_APOLLO:-}" in
   1|true|TRUE|yes|YES|on|ON)
     apollo_args=(--apollo)
+    ;;
+esac
+case "${MASTERING_APOLLO_ONLY:-}" in
+  1|true|TRUE|yes|YES|on|ON)
+    apollo_args=(--apollo --apollo-only)
     ;;
 esac
 

@@ -7,6 +7,7 @@
 #   ./master.sh /mnt/c/Production/music/Submission/song.wav
 #   ./master.sh /mnt/c/Production/music/Submission
 #   ./master.sh --apollo /mnt/c/Production/music/Submission/song.wav
+#   ./master.sh --apollo-only /mnt/c/Production/music/Submission/song.wav
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,9 +27,11 @@ Usage:
   ./master.sh <folder>
   ./master.sh <input-wav> <out-dir> [basename]
   ./master.sh --apollo <input-wav>
+  ./master.sh --apollo-only <input-wav>
 
 Options:
   --apollo      enable Apollo restoration candidates for this run
+  --apollo-only run only Apollo restoration; skip VST mastering candidates
   --no-apollo   disable Apollo even if MASTERING_APOLLO=1 is set
   --fast        disable optional CLAP/MERT local model scoring for this run
   --jobs N      parallel candidate render jobs
@@ -44,6 +47,7 @@ Defaults:
 Examples:
   ./master.sh /mnt/c/Production/music/Submission/abe002_mulholland.wav
   ./master.sh --apollo /mnt/c/Production/music/Submission/abe002_mulholland.wav
+  ./master.sh --apollo-only --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
   ./master.sh --apollo --fast /mnt/c/Production/music/Submission/abe002_mulholland.wav
   MASTERING_LOCAL_MODELS=0 ./master.sh
   MASTERING_REFERENCE_DIR=/mnt/c/Production/music/references ./master.sh
@@ -61,6 +65,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --apollo)
       apollo_flag="1"
+      shift
+      ;;
+    --apollo-only)
+      apollo_flag="1"
+      export MASTERING_APOLLO_ONLY=1
       shift
       ;;
     --no-apollo)
