@@ -183,10 +183,14 @@ def _choose_from_report(
     selected_index = default_index
     if interactive:
         default_name = str(candidates[default_index].get("name") or "model best")
-        raw_choice = input_fn(
-            f"Choose final master [1-{len(candidates)}] "
-            f"(Enter = {default_index + 1}, {default_name}): "
-        ).strip()
+        try:
+            raw_choice = input_fn(
+                f"Choose final master [1-{len(candidates)}] "
+                f"(Enter = {default_index + 1}, {default_name}): "
+            ).strip()
+        except EOFError:
+            raw_choice = ""
+            print("[choose] Input stream closed; using model best/default.")
         if raw_choice:
             if raw_choice.isdigit():
                 numeric = int(raw_choice)
@@ -269,7 +273,7 @@ def _run_choose(argv: list[str]) -> None:
         report_path,
         output_path,
         clean=args.clean,
-        interactive=sys.stdin.isatty(),
+        interactive=True,
     )
 
 
